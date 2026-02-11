@@ -1,0 +1,23 @@
+[MASTER]
+# Specify directories or files to analyze
+ignore=CVS,.git,__pycache__,.egg-info,.venv,venv
+# Add patterns to ignore (supports wildcards)
+ignore-patterns=.*\.egg-info,.*__pycache__.*
+
+[MESSAGES CONTROL]
+# All checks are enabled except the following
+disable=missing-class-docstring,
+    missing-module-docstring,
+    missing-function-docstring
+
+[REFACTORING]
+max-nested-blocks=3
+
+[DESIGN]
+max-args=5
+max-bool-expr=3
+max-branches=5
+max-locals=8
+max-public-methods=10
+max-returns=4
+max-statements=20
