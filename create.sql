@@ -7,7 +7,7 @@ USE Mirrulations;
 CREATE TABLE IF NOT EXISTS document (
     docket_id VARCHAR(255),
     title VARCHAR(255),
-    cfrPart VARCHAR(255),
+    cfr_part VARCHAR(255),
     agency_id VARCHAR(255),
     document_type VARCHAR(255),
     authors VARCHAR(255),
