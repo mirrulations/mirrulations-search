@@ -1,0 +1,29 @@
+
+# master section handles the high-level environment and file management
+[MASTER]
+# Specify directories or files to analyze. 
+# this are the default directories that pylint will ignore
+ignore=CVS,.git,__pycache__,.egg-info,.venv,venv 
+# Add patterns to ignore (supports wildcards)
+ignore-patterns=.*\.egg-info,.*__pycache__.*
+
+# messages control section handles the specific messages that pylint will check for
+[MESSAGES CONTROL]
+# All checks are enabled except the following
+disable=missing-class-docstring,
+    missing-module-docstring,
+    missing-function-docstring
+
+# refactoring section handles the refactoring of the code
+[REFACTORING]
+max-nested-blocks=3
+
+# design section handles the design of the code
+[DESIGN]
+max-args=5
+max-bool-expr=3
+max-branches=5
+max-locals=8
+max-public-methods=10
+max-returns=4
+max-statements=20

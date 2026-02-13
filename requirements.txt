@@ -1,2 +1,6 @@
 flask
+pylint 
+pytest
+gunicorn
 
+pytest-cov
