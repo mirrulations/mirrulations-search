@@ -4,3 +4,4 @@ pytest
 gunicorn
 
 pytest-cov
+mysql-connector-python
