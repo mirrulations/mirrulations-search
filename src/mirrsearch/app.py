@@ -1,5 +1,7 @@
 import os
 from flask import Flask, render_template, request
+from mirrsearch.internalLogic import internalLogic
+
 
 def create_app():
     # This is needed due to templates being 2 levels up from this file causing flask not to see it.
@@ -13,16 +15,19 @@ def create_app():
     def home():
         return render_template('index.html')
 
-    
-    def hello_world():
-        return "<p>Hello, World!</p>"
-	
     @app.route("/search/")
     def search():
+        # Get the search query from URL parameters
         search_input = request.args.get('str')
-        return ["Test", "Dummy", search_input]
-
-
+        
+        # If no query parameter provided, use default
+        if search_input is None:
+            search_input = "example_query"
+        
+        # Use InternalLogic to process the search
+        logic = internalLogic("sample_database")
+        return logic.search(search_input)
+    
     return app
 
 app = create_app()

@@ -1,5 +1,9 @@
 flask
+pylint 
 gunicorn
 selenium
 dotenv
 pytest
+opensearch-py
+pytest-cov
+psycopg2
