@@ -30,9 +30,3 @@ def create_app():
         return jsonify(results)
     
     return app
-
-app = create_app()
-
-if __name__ == '__main__':
-    app.run(port=80, debug=True)
-
