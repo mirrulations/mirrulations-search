@@ -67,6 +67,7 @@ def get_postgres_connection() -> DBLayer:
     return DBLayer(conn=conn)
 
 
+
 def get_db() -> DBLayer:
     """
     Return the DB layer connected to PostgreSQL.
