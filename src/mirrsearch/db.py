@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import List, Dict, Any, Optional
 import psycopg2
-from opensearchpy import OpenSearch 
+from opensearchpy import OpenSearch
 
 
 @dataclass(frozen=True)
@@ -15,14 +15,18 @@ class DBLayer:
         return [
             {
                 "docket_id": "CMS-2025-0240",
-                "title": "CY 2026 Changes to the End-Stage Renal Disease (ESRD) Prospective Payment System and Quality Incentive Program. CMS1830-P Display",
+                "title": "CY 2026 Changes to the End-Stage Renal Disease (ESRD) Prospective Payment"
+                " System and Quality Incentive Program. CMS1830-P Display",
                 "cfrPart": "42 CFR Parts 413 and 512",
                 "agency_id": "CMS",
                 "document_type": "Proposed Rule",
             },
             {
                 "docket_id": "CMS-2025-0240",
-                "title": "Medicare Program: End-Stage Renal Disease Prospective Payment System, Payment for Renal Dialysis Services Furnished to Individuals with Acute Kidney Injury, End-Stage Renal Disease Quality Incentive Program, and End-Stage Renal Disease Treatment Choices Model",
+                "title": "Medicare Program: End-Stage Renal Disease Prospective Payment System, "
+                "Payment for Renal Dialysis Services Furnished to Individuals with Acute Kidney "
+                "Injury, End-Stage Renal Disease Quality Incentive Program, and End-Stage Renal "
+                "Disease Treatment Choices Model",
                 "cfrPart": "42 CFR Parts 413 and 512",
                 "agency_id": "CMS",
                 "document_type": "Proposed Rule",
@@ -54,9 +58,9 @@ def get_db() -> DBLayer:
     return DBLayer(conn=None)
 
 def get_opensearch_connection() -> OpenSearch:
-     client = OpenSearch(
+    client = OpenSearch(
          hosts=[{"host": "localhost", "port": 9200}],
          use_ssl=False,
          verify_certs=False,
      )
-     return client
+    return client
