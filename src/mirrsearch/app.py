@@ -19,20 +19,19 @@ def create_app():
     def search():
         # Get the search query from URL parameters
         search_input = request.args.get('str')
-        
+
         # If no query parameter provided, use default
         if search_input is None:
             search_input = "example_query"
-        
+
         # Use InternalLogic to process the search
         logic = internalLogic("sample_database")
         results = logic.search(search_input)
         return jsonify(results)
-    
+
     return app
 
 app = create_app()
 
 if __name__ == '__main__':
     app.run(port=80, debug=True)
-
