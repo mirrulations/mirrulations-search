@@ -1,7 +1,7 @@
 #from opensearchpy import OpenSearch 
 from dataclasses import dataclass
 from typing import List, Dict, Any
-import psycopg2
+import psycopg2, os
 from psycopg2.extras import RealDictCursor
 
 @dataclass(frozen=True)
@@ -62,7 +62,8 @@ def get_postgres_connection() -> DBLayer:
     """
     conn = psycopg2.connect(
         host="localhost",
-        dbname="mirrulations"
+        dbname="mirrulations",
+	user=os.getlogin()
     )
     return DBLayer(conn=conn)
 
