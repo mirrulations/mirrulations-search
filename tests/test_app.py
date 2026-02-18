@@ -1,6 +1,7 @@
 """
 Tests for the Flask app endpoints
 """
+# pylint: disable=redefined-outer-name
 import pytest
 from mirrsearch.app import create_app
 
@@ -8,9 +9,9 @@ from mirrsearch.app import create_app
 @pytest.fixture
 def app():
     """Create and configure a test app instance"""
-    app = create_app()
-    app.config['TESTING'] = True
-    return app
+    flask_app = create_app()
+    flask_app.config['TESTING'] = True
+    return flask_app
 
 
 @pytest.fixture
