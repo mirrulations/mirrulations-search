@@ -1,6 +1,7 @@
 """
 Tests for the database layer (db.py)
 """
+# pylint: disable=redefined-outer-name,protected-access
 import pytest
 from mirrsearch.db import DBLayer, get_db
 
@@ -216,3 +217,4 @@ def test_search_with_parentheses(db):
     """Test search with parentheses in query"""
     result = db.search("(ESRD)")
     assert len(result) >= 1
+    
