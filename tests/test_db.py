@@ -5,8 +5,8 @@ import pytest
 from mirrsearch.db import DBLayer, get_db
 
 
-@pytest.fixture
-def db():
+@pytest.fixture(name="db_layer")
+def _db_layer():
     """Create a DBLayer instance for testing"""
     return DBLayer()
 
@@ -14,44 +14,44 @@ def db():
 # Tests for DBLayer initialization and basic functionality
 def test_db_layer_creation():
     """Test that DBLayer can be instantiated"""
-    db = DBLayer()
-    assert db is not None
-    assert isinstance(db, DBLayer)
+    layer = DBLayer()
+    assert layer is not None
+    assert isinstance(layer, DBLayer)
 
 
 def test_db_layer_is_frozen():
     """Test that DBLayer is a frozen dataclass (immutable)"""
-    db = DBLayer()
+    layer = DBLayer()
     # Frozen dataclasses should raise an error when trying to modify
     with pytest.raises(Exception):  # FrozenInstanceError
-        db.new_attribute = "test"
+        layer.new_attribute = "test"
 
 
 def test_get_db_function():
     """Test the get_db factory function"""
-    db = get_db()
-    assert isinstance(db, DBLayer)
+    layer = get_db()
+    assert isinstance(layer, DBLayer)
 
 
-# Tests for _items() method
+# Tests for items via public search()
 def test_items_returns_list():
-    """Test that _items returns a list"""
-    db = DBLayer()
-    items = db._items()
+    """Test that search returns a list of items for empty query"""
+    layer = DBLayer()
+    items = layer.search("")
     assert isinstance(items, list)
 
 
 def test_items_returns_two_records():
-    """Test that _items returns exactly 2 records"""
-    db = DBLayer()
-    items = db._items()
+    """Test that search with empty query returns exactly 2 records"""
+    layer = DBLayer()
+    items = layer.search("")
     assert len(items) == 2
 
 
 def test_items_have_required_fields():
-    """Test that each item has all required fields"""
-    db = DBLayer()
-    items = db._items()
+    """Test that each item returned has all required fields"""
+    layer = DBLayer()
+    items = layer.search("")
 
     required_fields = ["docket_id", "title", "cfrPart", "agency_id", "document_type"]
 
@@ -62,8 +62,8 @@ def test_items_have_required_fields():
 
 def test_items_field_types():
     """Test that fields in items have correct types"""
-    db = DBLayer()
-    items = db._items()
+    layer = DBLayer()
+    items = layer.search("")
 
     for item in items:
         assert isinstance(item["docket_id"], str)
@@ -75,8 +75,8 @@ def test_items_field_types():
 
 def test_items_content():
     """Test specific content of the items"""
-    db = DBLayer()
-    items = db._items()
+    layer = DBLayer()
+    items = layer.search("")
 
     # Check first item
     assert items[0]["docket_id"] == "CMS-2025-0240"
@@ -89,91 +89,91 @@ def test_items_content():
 
 
 # Tests for search() method
-def test_search_returns_list(db):
+def test_search_returns_list(db_layer):
     """Test that search returns a list"""
-    result = db.search("CMS")
+    result = db_layer.search("CMS")
     assert isinstance(result, list)
 
 
-def test_search_finds_by_docket_id(db):
+def test_search_finds_by_docket_id(db_layer):
     """Test search can find items by docket_id"""
-    result = db.search("CMS-2025-0240")
+    result = db_layer.search("CMS-2025-0240")
     assert len(result) == 2  # Both items have this docket_id
     assert all(item["docket_id"] == "CMS-2025-0240" for item in result)
 
 
-def test_search_finds_by_title(db):
+def test_search_finds_by_title(db_layer):
     """Test search can find items by title keywords"""
-    result = db.search("ESRD")
+    result = db_layer.search("ESRD")
     assert len(result) >= 1
     assert all("ESRD" in item["title"] or "esrd" in item["title"].lower() for item in result)
 
 
-def test_search_is_case_insensitive(db):
+def test_search_is_case_insensitive(db_layer):
     """Test that search is case-insensitive"""
-    result_upper = db.search("CMS")
-    result_lower = db.search("cms")
-    result_mixed = db.search("Cms")
+    result_upper = db_layer.search("CMS")
+    result_lower = db_layer.search("cms")
+    result_mixed = db_layer.search("Cms")
 
     assert len(result_upper) == len(result_lower) == len(result_mixed)
     assert result_upper == result_lower == result_mixed
 
 
-def test_search_strips_whitespace(db):
+def test_search_strips_whitespace(db_layer):
     """Test that search strips leading/trailing whitespace"""
-    result_normal = db.search("CMS")
-    result_spaces = db.search("  CMS  ")
+    result_normal = db_layer.search("CMS")
+    result_spaces = db_layer.search("  CMS  ")
 
     assert result_normal == result_spaces
 
 
-def test_search_partial_match_title(db):
+def test_search_partial_match_title(db_layer):
     """Test search with partial title match"""
-    result = db.search("Medicare")
+    result = db_layer.search("Medicare")
     assert len(result) >= 1
     assert any("Medicare" in item["title"] for item in result)
 
 
-def test_search_partial_match_docket(db):
+def test_search_partial_match_docket(db_layer):
     """Test search with partial docket_id match"""
-    result = db.search("2025")
+    result = db_layer.search("2025")
     assert len(result) == 2  # Both items have 2025 in docket_id
 
 
-def test_search_no_results(db):
+def test_search_no_results(db_layer):
     """Test search returns empty list when no matches"""
-    result = db.search("nonexistent_query_xyz123")
+    result = db_layer.search("nonexistent_query_xyz123")
     assert result == []
     assert len(result) == 0
 
 
-def test_search_empty_string(db):
+def test_search_empty_string(db_layer):
     """Test search with empty string returns all items"""
-    result = db.search("")
+    result = db_layer.search("")
     # Empty string matches everything (it's in every string)
     assert len(result) == 2
 
 
-def test_search_specific_terms(db):
+def test_search_specific_terms(db_layer):
     """Test search with specific medical terms"""
     # Search for "Prospective Payment System"
-    result = db.search("Prospective Payment System")
+    result = db_layer.search("Prospective Payment System")
     assert len(result) >= 1
 
     # Search for "Quality Incentive"
-    result = db.search("Quality Incentive")
+    result = db_layer.search("Quality Incentive")
     assert len(result) >= 1
 
 
-def test_search_multiple_words(db):
+def test_search_multiple_words(db_layer):
     """Test search with multiple words (treated as single query)"""
-    result = db.search("End-Stage Renal")
+    result = db_layer.search("End-Stage Renal")
     assert len(result) >= 1
 
 
-def test_search_returns_correct_structure(db):
+def test_search_returns_correct_structure(db_layer):
     """Test that search results have correct structure"""
-    result = db.search("CMS")
+    result = db_layer.search("CMS")
 
     for item in result:
         assert isinstance(item, dict)
@@ -184,35 +184,35 @@ def test_search_returns_correct_structure(db):
         assert "document_type" in item
 
 
-def test_search_does_not_modify_original_data(db):
+def test_search_does_not_modify_original_data(db_layer):
     """Test that search doesn't modify the original data"""
-    original_items = db._items()
+    original_items = db_layer.search("")
     original_count = len(original_items)
 
     # Perform multiple searches
-    db.search("CMS")
-    db.search("Medicare")
-    db.search("xyz")
+    db_layer.search("CMS")
+    db_layer.search("Medicare")
+    db_layer.search("xyz")
 
     # Check data is unchanged
-    assert len(db._items()) == original_count
-    assert db._items() == original_items
+    assert len(db_layer.search("")) == original_count
+    assert db_layer.search("") == original_items
 
 
 # Edge case tests
-def test_search_special_characters(db):
+def test_search_special_characters(db_layer):
     """Test search with special characters"""
-    result = db.search("CMS-2025")
+    result = db_layer.search("CMS-2025")
     assert len(result) == 2
 
 
-def test_search_numbers_only(db):
+def test_search_numbers_only(db_layer):
     """Test search with only numbers"""
-    result = db.search("2025")
+    result = db_layer.search("2025")
     assert len(result) == 2
 
 
-def test_search_with_parentheses(db):
+def test_search_with_parentheses(db_layer):
     """Test search with parentheses in query"""
-    result = db.search("(ESRD)")
+    result = db_layer.search("(ESRD)")
     assert len(result) >= 1
