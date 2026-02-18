@@ -36,6 +36,18 @@ class DBLayer:
             item for item in self._items()
             if q in item["title"].lower() or q in item["docket_id"].lower()
         ]
+    
+    def create_database(dbname: str, user: str, password: str, host: str = "localhost") -> None:
+      """
+      Creates an empty PostgreSQL database.
+      Connects to the default 'postgres' DB first, since you can't create
+      a DB while connected to it (or to one that doesn't exist yet).
+      """
+      conn = psycopg2.connect(host=host, dbname="postgres", user=user, password=password)
+      conn.autocommit = True  # Required — CREATE DATABASE can't run in a transaction
+      with conn.cursor() as cur:
+          cur.execute(f"CREATE DATABASE IF NOT EXISTS {dbname}")
+      conn.close()
 
 def get_postgres_connection() -> DBLayer:
     conn = psycopg2.connect(
