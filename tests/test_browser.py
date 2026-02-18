@@ -18,8 +18,6 @@ def test_browser_search():
     # Give server time to start
     time.sleep(5)
 
-    dotenv.load_dotenv()
-    # url = os.getenv('URL')
     driver = webdriver.Chrome()
     driver.get('http://127.0.0.1:5001')
 
