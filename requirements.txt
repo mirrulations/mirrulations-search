@@ -1,9 +1,7 @@
 flask
-pylint
-pytest 
+pylint 
+pytest
 gunicorn
-selenium
-dotenv
 mysql-connector-python
 opensearch-py
 pytest-cov
