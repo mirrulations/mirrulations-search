@@ -1,6 +1,7 @@
 """
 Tests for the database layer (db.py)
 """
+# pylint: disable=redefined-outer-name,protected-access
 import pytest
 from mirrsearch.db import DBLayer, get_db
 
