@@ -45,6 +45,8 @@ python app.py
 
 ## Run with Gunicorn using the Postgres database
 You must run ./db/setup_postgres.sh before to have created the actual database.
+This also requires python-dotenv to be intalled which is now added in the requirements.txt file.
+Or run pip install python-dotenv in your .venv.
 
 Create a `.env` file in the root directory with the following variables:
 ```bash
