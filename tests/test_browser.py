@@ -45,34 +45,33 @@ def free_port(port):
 def fixture_driver():
     """Set up the Selenium Driver and Flask process"""
     free_port(5001)  # Ensure port is clear before starting
-
+    
     # Start flask app
-    process = subprocess.Popen(
+    with subprocess.Popen(
         ["flask", "--app", "src.mirrsearch.app", "run", "--port", "5001", "--no-reload"]
-    )
+    ) as process:
+        # Give server time to start
+        time.sleep(5)
 
-    # Give server time to start
-    time.sleep(5)
+        # Needed to work with Github CI
+        options = Options()
+        options.add_argument("--headless=new")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
 
-    # Needed to work with Github CI
-    options = Options()
-    options.add_argument("--headless=new")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
+        set_up_driver = webdriver.Chrome(options=options)
 
-    set_up_driver = webdriver.Chrome(options=options)
+        set_up_driver.get('http://127.0.0.1:5001')
 
-    set_up_driver.get('http://127.0.0.1:5001')
+        # This allows the test to run, and then clean up the driver and process after
+        yield set_up_driver
 
-    # This allows the test to run, and then clean up the driver and process after
-    yield set_up_driver
-
-    set_up_driver.quit()
-    process.terminate()
-    try:
-        process.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        process.kill()
+        set_up_driver.quit()
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
 
 def test_browser_search(driver):
     """Run the test with two search terms"""
