@@ -46,12 +46,12 @@ def fixture_driver():
     """Set up the Selenium Driver and Flask process"""
     free_port(5001)  # Ensure port is clear before starting
 
-    # Start flask app
-    with subprocess.Popen(
+    # Start flask app and keep it running for the duration of the test.
+    process = subprocess.Popen(  # pylint: disable=consider-using-with
         ["flask", "--app", "src.mirrsearch.app", "run", "--port", "5001", "--no-reload"]
-    ) as process:
-        # Give server time to start
-        time.sleep(5)
+    )
+    # Give server time to start
+    time.sleep(5)
 
     # Needed to work with Github CI
     options = Options()
