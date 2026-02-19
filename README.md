@@ -55,6 +55,7 @@ DB_PORT=5432
 DB_NAME=mirrulations
 DB_USER=your_macOS_username (You can find this by doing `whoami` in your terminal)
 DB_PASSWORD=
+USE_POSTGRES=true
 ```
 Then run:
 ```bash
