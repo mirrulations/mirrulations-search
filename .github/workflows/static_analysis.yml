@@ -14,3 +14,9 @@ jobs:
 
       - name: Execute Static Analysis
         run: pylint src/mirrsearch/ tests/
+
+      - name: Install djLint
+        run: pip install djlint
+
+      - name: Lint HTML Templates
+        run: djlint templates/ --check
