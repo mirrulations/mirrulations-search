@@ -1,12 +1,8 @@
-# Add selenium script
+import time
 import subprocess
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.wait import WebDriverWait
-import dotenv
-import os
-import pytest
-import time
 
 def test_browser_search():
 
@@ -22,20 +18,18 @@ def test_browser_search():
     driver.get('http://127.0.0.1:5001')
 
     search_input = driver.find_element(By.ID, 'searchInput')
-    search_button = driver.find_element(By.ID, 'searchButton')
     search_terms = ['test', 'esrd']
 
     for search_term in search_terms:
         search_input.clear()
         search_input.send_keys(search_term)
 
-        search_button.click()
+        driver.find_element(By.ID, 'searchButton').click()
 
         output = driver.find_element(By.ID, 'output')
 
         wait = WebDriverWait(driver, timeout=10)
         wait.until(lambda d: d.find_element(By.ID, 'output').text != "")
-        print(f"Search term: {search_term}, Output: {output.text}")
 
         if search_term not in ['esrd']:
             expected = '''[]'''
@@ -46,4 +40,3 @@ def test_browser_search():
 
     driver.quit()
     process.terminate()
-
