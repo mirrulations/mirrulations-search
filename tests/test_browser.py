@@ -9,30 +9,30 @@ from selenium.webdriver.chrome.options import Options
 
 @pytest.fixture(name="driver")
 def fixture_driver():
-
-     # Start Flask app
-    process = subprocess.Popen(
-    ["flask", "--app", "src.mirrsearch.app", "run", "--port", "5001", "--no-reload"]
-    )
-
-    # Give server time to start
-    time.sleep(5)
     
-    # Needed to work with Github CI
-    options = Options()
-    options.add_argument("--headless=new")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
+    # Start Flask app
+    process = subprocess.Popen(
+        ["flask", "--app", "src.mirrsearch.app", "run", "--port", "5001", "--no-reload"]
+    )
+    with process:
+        # Give server time to start
+        time.sleep(5)
 
-    set_up_driver = webdriver.Chrome(options=options)
+        # Needed to work with Github CI
+        options = Options()
+        options.add_argument("--headless=new")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
 
-    set_up_driver.get('http://127.0.0.1:5001')
+        set_up_driver = webdriver.Chrome(options=options)
 
-    # This allows the test to run, and then clean up the driver and process after
-    yield set_up_driver
+        set_up_driver.get('http://127.0.0.1:5001')
 
-    set_up_driver.quit()
-    process.terminate()
+        # This allows the test to run, and then clean up the driver and process after
+        yield set_up_driver
+
+        set_up_driver.quit()
+        process.terminate()
 
 def test_browser_search(driver):
 
