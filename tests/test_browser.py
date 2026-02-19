@@ -1,4 +1,5 @@
 import time
+import os
 import json
 import subprocess
 import pytest
@@ -7,17 +8,52 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.wait import WebDriverWait
 from selenium.webdriver.chrome.options import Options
 
+def free_port(port):
+    """Kill Flask processes currently holding the given port."""
+    try:
+        # This gets the files using the port
+        result = subprocess.run(
+            ["lsof", "-ti", f":{port}"],
+            capture_output=True,
+            text=True,
+            check=False
+        )
+
+        pids = result.stdout.strip().split()
+
+        for pid in pids:
+            # This inspects the command running for each PID
+            cmd_result = subprocess.run(
+                ["ps", "-p", pid, "-o", "command="],
+                capture_output=True,
+                text=True,
+                check=False
+            )
+
+            command = cmd_result.stdout.strip()
+
+            # Only kill if it's a Flask-related process
+            if "flask" in command or "mirrsearch" in command:
+                os.kill(int(pid), 9)
+
+        time.sleep(0.5)  # Extra time for the port to be released
+
+    except FileNotFoundError:
+        pass  # just in case lsof isn't available
+
 @pytest.fixture(name="driver")
 def fixture_driver():
-    
-    # Start Flask app
+    """Set up the Selenium Driver and Flask process"""
+    free_port(5001)  # Ensure port is clear before starting
+
+    # Start flask app
     process = subprocess.Popen(
         ["flask", "--app", "src.mirrsearch.app", "run", "--port", "5001", "--no-reload"]
     )
     with process:
         # Give server time to start
         time.sleep(5)
-
+    
         # Needed to work with Github CI
         options = Options()
         options.add_argument("--headless=new")
@@ -31,11 +67,11 @@ def fixture_driver():
         # This allows the test to run, and then clean up the driver and process after
         yield set_up_driver
 
-        set_up_driver.quit()
-        process.terminate()
+    set_up_driver.quit()
+    process.terminate()
 
 def test_browser_search(driver):
-
+    """Run the test with two search terms"""
     search_terms = ['test', 'esrd']
 
     for search_term in search_terms:
