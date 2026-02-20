@@ -14,3 +14,33 @@ jobs:
 
       - name: Execute Static Analysis
         run: pylint src/mirrsearch/ tests/
+
+      - name: Install djLint
+        run: pip install djlint
+
+      #Linter for HTML Files
+
+      - name: Lint HTML Templates
+        run: djlint templates/ --check
+
+      #Linter for CSS Files
+
+       
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Stylelint
+        run: |
+          npm init -y
+          npm install stylelint stylelint-config-standard
+
+      - name: Create Stylelint Config
+        run: |
+          echo '{
+            "extends": "stylelint-config-standard"
+          }' > .stylelintrc.json
+
+      - name: Lint CSS
+        run: npx stylelint "static/**/*.css"
