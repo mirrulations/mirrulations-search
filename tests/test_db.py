@@ -2,8 +2,9 @@
 Tests for the database layer (db.py)
 """
 # pylint: disable=redefined-outer-name,protected-access
+import os
 import pytest
-from mirrsearch.db import DBLayer, get_db
+from mirrsearch.db import DBLayer, get_db, get_postgres_connection
 
 
 @pytest.fixture
@@ -217,3 +218,21 @@ def test_search_with_parentheses(db):
     """Test search with parentheses in query"""
     result = db.search("(ESRD)")
     assert len(result) >= 1
+
+
+@pytest.mark.integration
+def test_get_postgres_connection_establishes_connection():
+    """Integration test: ensure psycopg2 connection is established."""
+    if os.getenv("USE_POSTGRES", "").lower() not in {"1", "true", "yes", "on"}:
+        pytest.skip("Integration test requires USE_POSTGRES=true")
+
+    db = get_postgres_connection()
+    assert db.conn is not None
+
+    # Verify connection works
+    with db.conn.cursor() as cur:
+        cur.execute("SELECT 1;")
+        result = cur.fetchone()
+        assert result[0] == 1
+
+    db.conn.close()
