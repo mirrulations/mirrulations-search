@@ -218,6 +218,9 @@ class _FakeCursor:
     def fetchall(self):
         return self._rows
 
+    def close(self):
+        return None
+
 
 class _FakeConn:
     def __init__(self, rows):
@@ -225,6 +228,9 @@ class _FakeConn:
 
     def cursor(self):
         return self.cursor_obj
+
+    def close(self):
+        return None
 
 
 def test_search_postgres_branch_without_filter():
