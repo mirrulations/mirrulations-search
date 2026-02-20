@@ -113,7 +113,8 @@ def test_search_with_postgres_seed_data(client):
     assert all(item['docket_id'] == 'CMS-2025-0242' for item in data)
 
 def test_search_without_filter_returns_all_matches(client):
-    """Test that omitting the filter param returns all matching results regardless of document_type"""
+    """Test that omitting the filter param returns all matching results
+    regardless of document_type"""
     if os.getenv("USE_POSTGRES", "").lower() in {"1", "true", "yes", "on"}:
         pytest.skip("Unit tests expect dummy data")
     response = client.get('/search/?str=renal')

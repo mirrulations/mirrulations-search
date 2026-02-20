@@ -21,7 +21,7 @@ def create_app():
         filter_param = request.args.get('filter')  # e.g. /search/?str=renal&filter=Proposed Rule
 
         if search_input is None:
-           search_input = "example_query"
+            search_input = "example_query"
 
         logic = InternalLogic("sample_database")
         results = logic.search(search_input, filter_param)

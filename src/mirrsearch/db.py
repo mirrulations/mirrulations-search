@@ -59,25 +59,23 @@ class DBLayer:
             if filter_param:
                 results = [
                     item for item in results
-                     if item["document_type"].lower() == filter_param.lower()
+                    if item["document_type"].lower() == filter_param.lower()
                 ]
             return results
-        else:
-            sql = """
-                SELECT docket_id, title, cfr_part, agency_id, document_type
-                FROM document
-                WHERE (docket_id ILIKE %s OR title ILIKE %s)
-            """
-            params = [f"%{q}%", f"%{q}%"] if q else ["%%", "%%"]
 
-            if filter_param:
-                sql += " AND document_type = %s"
-                params.append(filter_param)
+        sql = """
+            SELECT docket_id, title, cfr_part, agency_id, document_type
+            FROM document
+            WHERE (docket_id ILIKE %s OR title ILIKE %s)
+        """
+        params = [f"%{q}%", f"%{q}%"] if q else ["%%", "%%"]
 
-            with self.conn.cursor() as cur:
-                cur.execute(sql, params)
-                rows = cur.fetchall()
+        if filter_param:
+            sql += " AND document_type = %s"
+            params.append(filter_param)
 
+        with self.conn.cursor() as cur:
+            cur.execute(sql, params)
             return [
                 {
                     "docket_id": row[0],
@@ -86,7 +84,7 @@ class DBLayer:
                     "agency_id": row[3],
                     "document_type": row[4],
                 }
-                for row in rows
+                for row in cur.fetchall()
             ]
 
 def get_postgres_connection() -> DBLayer:
