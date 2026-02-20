@@ -1,5 +1,5 @@
 from opensearchpy import OpenSearch
-from src.mirrsearch.db import get_db
+from mirrsearch.db import get_db
 
 INDEX_NAME = "docket-comments"
 DOCKET_ID = "CMS-2025-0240"

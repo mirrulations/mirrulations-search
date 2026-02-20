@@ -46,8 +46,7 @@ def fixture_driver():
     """Set up the Selenium Driver and Flask process"""
     free_port(5001)  # Ensure port is clear before starting
 
-    # Start flask app
-    process = subprocess.Popen(
+    process = subprocess.Popen(  # pylint: disable=consider-using-with
         ["flask", "--app", "src.mirrsearch.app", "run", "--port", "5001", "--no-reload"]
     )
 
@@ -60,7 +59,7 @@ def fixture_driver():
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
 
-    set_up_driver = webdriver.Chrome(options=options)
+    set_up_driver = webdriver.Chrome(options=options)  # pylint: disable=not-callable
 
     set_up_driver.get('http://127.0.0.1:5001')
 
@@ -93,17 +92,17 @@ def test_browser_search(driver):
             expected = []
         else:
             expected = [
-        {
-            "agency_id": "CMS",
-            "cfrPart": "42 CFR Parts 413 and 512",
-            "docket_id": "CMS-2025-0240",
-            "document_type": "Proposed Rule",
-            "title": (
-                "CY 2026 Changes to the End-Stage Renal Disease (ESRD) "
-                "Prospective Payment System and Quality Incentive Program. "
-                "CMS1830-P Display"
-            ),
-        }
-    ]
+                {
+                    "agency_id": "CMS",
+                    "cfrPart": "42 CFR Parts 413 and 512",
+                    "docket_id": "CMS-2025-0240",
+                    "document_type": "Proposed Rule",
+                    "title": (
+                        "CY 2026 Changes to the End-Stage Renal Disease (ESRD) "
+                        "Prospective Payment System and Quality Incentive Program. "
+                        "CMS1830-P Display"
+                    ),
+                }
+            ]
 
         assert json.loads(output.text) == expected
