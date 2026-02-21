@@ -25,4 +25,4 @@ jobs:
             cd /home/ec2-user/mirrulations-search
             git fetch origin main
             git reset --hard origin/main
-            ./prod_deploy.sh
+            sudo ./prod_deploy.sh
