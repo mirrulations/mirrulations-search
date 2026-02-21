@@ -1,37 +1,92 @@
-# Creating an EC2 Instance to Access Mirrulations Data
+# Local Development & EC2 Setup Guide
 
-## Steps
+---
 
-### 1. Navigate to EC2
+## Local Development
 
-Go to **AWS Console → EC2 → Instances → Launch Instances**.
+### Prerequisites
 
-### 2. Name Your Instance
+- AWS CLI installed and configured with your credentials
+- Access to the shared AWS account
 
-Give your instance a descriptive name.
+### Step 1: Set Up Your `.env` File
 
-### 3. Select an AMI and Instance Type
+Create a `.env` file inside `src/mirrsearch/`:
 
-Choose the appropriate AMI (e.g., Amazon Linux 2 or Ubuntu) and instance type for your workload.
+```bash
+nano src/mirrsearch/.env
+```
 
-### 4. Set Up a Key Pair
+Add the following with your actual credentials from AWS Secrets Manager:
 
-Select the existing key pair named **`mirrulations`**.
+```bash
+DB_HOST=your_db_host
+DB_PORT=5432
+DB_NAME=your_db_name
+DB_USER=your_username
+DB_PASSWORD=your_password
+USE_POSTGRES=true
+```
 
-### 5. Configure Network Settings
+> **Never commit your `.env` file.** It is already listed in `.gitignore`.
 
-Under **Network Settings**, select the existing VPC named **`mirrulations db`**.
+### Step 2: Run the App
 
-Once the VPC is selected, click **"Select existing security group"** and choose **`mirrulations-search-security-group`**.
+From the project root:
 
-### 6. Launch the Instance
+```bash
+bash dev_up.sh
+```
 
-Review your settings and click **Launch Instance**.
+The app will be available at `http://localhost`.
 
-### 7. Connect to the Instance
+### Step 3: Shut Down
 
-1. Go to **AWS Console → EC2 → Instances** and select your running instance.
-2. Click the **Connect** button at the top.
-3. Select the **EC2 Instance Connect** tab.
-4. Click **Connect** — this will open a terminal in your browser.
+```bash
+source deactivate_env.sh
+```
 
+This clears your environment variables from the session.
+
+---
+
+## EC2 Deployment
+
+### Prerequisites
+
+- Access to the shared AWS account
+
+### Step 1: Fill In the AWS Secrets Manager Details in `db.py`
+
+In `src/mirrsearch/db.py`, find `_get_secrets_from_aws()` and replace the placeholders with the real values:
+
+```python
+client = boto3.client(
+    "secretsmanager",
+    region_name="us-east-1"  # replace with your region
+)
+response = client.get_secret_value(
+    SecretId="your-secret-name"  # replace with your secret name
+)
+```
+
+Commit this change before deploying.
+
+### Step 2: Pull the Latest Code
+
+Go to the AWS Console → EC2 → select the instance → Connect, then run:
+
+```bash
+cd mirrulations-search
+git pull origin main
+```
+
+### Step 3: Run the Production Script
+
+```bash
+bash prod_up.sh
+```
+
+This will install dependencies, obtain an SSL certificate, and start the app as a systemd service. The `mirrsearch.service` file already has `USE_AWS_SECRETS=true` set, so the app will automatically pull credentials from AWS Secrets Manager.
+
+The app will be available at `https://dev.mirrulations.org`.
