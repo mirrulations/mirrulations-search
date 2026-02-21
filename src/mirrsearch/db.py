@@ -1,8 +1,14 @@
 from dataclasses import dataclass
 from typing import List, Dict, Any
 import os
+import json
 import psycopg2
 from opensearchpy import OpenSearch
+
+try:
+    import boto3
+except ImportError:
+    boto3 = None
 
 try:
     from dotenv import load_dotenv
@@ -19,57 +25,17 @@ class DBLayer:
     """
     conn: Any = None
 
-    def _items(self) -> List[Dict[str, Any]]:
-        return [
-            {
-                "docket_id": "CMS-2025-0240",
-                "title": (
-                    "CY 2026 Changes to the End-Stage Renal Disease (ESRD) "
-                    "Prospective Payment System and Quality Incentive Program. "
-                    "CMS1830-P Display"
-                ),
-                "cfrPart": "42 CFR Parts 413 and 512",
-                "agency_id": "CMS",
-                "document_type": "Proposed Rule",
-            },
-            {
-                "docket_id": "CMS-2025-0240",
-                "title": (
-                    "Medicare Program: End-Stage Renal Disease Prospective "
-                    "Payment System, Payment for Renal Dialysis Services "
-                    "Furnished to Individuals with Acute Kidney Injury, "
-                    "End-Stage Renal Disease Quality Incentive Program, and "
-                    "End-Stage Renal Disease Treatment Choices Model"
-                ),
-                "cfrPart": "42 CFR Parts 413 and 512",
-                "agency_id": "CMS",
-                "document_type": "Proposed Rule",
-            }
-        ]
-
     def search(self, query: str, filter_param: str = None) -> List[Dict[str, Any]]:
-        q = (query or "").strip()
-
         if self.conn is None:
-            q = q.lower()
-            results = [
-                item for item in self._items()
-                if q in item["title"].lower() or q in item["docket_id"].lower()
-            ]
-            if filter_param:
-                results = [
-                    item for item in results
-                    if item["document_type"].lower() == filter_param.lower()
-                ]
-            return results
+            raise RuntimeError("No database connection available. Set USE_POSTGRES=true and provide valid credentials.")
 
+        q = (query or "").strip()
         sql = """
-            SELECT docket_id, title, cfr_part, agency_id, document_type
-            FROM document
-            WHERE (docket_id ILIKE %s OR title ILIKE %s)
+            SELECT docket_id, document_title, agency_id, document_type
+            FROM documents
+            WHERE (docket_id ILIKE %s OR document_title ILIKE %s)
         """
         params = [f"%{q}%", f"%{q}%"] if q else ["%%", "%%"]
-
         if filter_param:
             sql += " AND document_type = %s"
             params.append(filter_param)
@@ -80,37 +46,77 @@ class DBLayer:
                 {
                     "docket_id": row[0],
                     "title": row[1],
-                    "cfrPart": row[2],
-                    "agency_id": row[3],
-                    "document_type": row[4],
+                    "agency_id": row[2],
+                    "document_type": row[3],
                 }
                 for row in cur.fetchall()
             ]
 
-def get_postgres_connection() -> DBLayer:
-    if LOAD_DOTENV is not None:
-        LOAD_DOTENV()
-    conn = psycopg2.connect(
-        host=os.getenv("DB_HOST", "localhost"),
-        port=os.getenv("DB_PORT", "5432"),
-        database=os.getenv("DB_NAME", "your_db"),
-        user=os.getenv("DB_USER", "your_user"),
-        password=os.getenv("DB_PASSWORD", "your_password")
+
+def _get_secrets_from_aws() -> Dict[str, str]:
+    """
+    Fetch database credentials from AWS Secrets Manager.
+    Used when running on EC2 with USE_AWS_SECRETS=true.
+    """
+    if boto3 is None:
+        raise ImportError("boto3 is required to use AWS Secrets Manager. Run: pip install boto3")
+
+    client = boto3.client(
+        "secretsmanager",
+        region_name="YOUR_REGION"  # TODO: replace with your region e.g. "us-east-1"
     )
+    response = client.get_secret_value(
+        SecretId="YOUR_SECRET_NAME"  # TODO: replace with your secret name e.g. "dev/mirrulations/postgres"
+    )
+    return json.loads(response["SecretString"])
+
+
+def get_postgres_connection() -> DBLayer:
+    """
+    Connect to PostgreSQL using either:
+    - AWS Secrets Manager (if USE_AWS_SECRETS=true) — used on EC2
+    - .env file via environment variables (default) — used locally
+    """
+    use_aws_secrets = os.getenv("USE_AWS_SECRETS", "").lower() in {"1", "true", "yes", "on"}
+
+    if use_aws_secrets:
+        creds = _get_secrets_from_aws()
+        conn = psycopg2.connect(
+            host=creds["host"],
+            port=creds["port"],
+            database=creds["db"],
+            user=creds["username"],
+            password=creds["password"]
+        )
+    else:
+        if LOAD_DOTENV is not None:
+            LOAD_DOTENV()
+        conn = psycopg2.connect(
+            host=os.getenv("DB_HOST"),
+            port=os.getenv("DB_PORT", "5432"),
+            database=os.getenv("DB_NAME"),
+            user=os.getenv("DB_USER"),
+            password=os.getenv("DB_PASSWORD")
+        )
+
     return DBLayer(conn)
 
 
 def get_db() -> DBLayer:
     """
     Return the default DB layer for the app.
-    Currently uses the in-memory dummy data for local/test usage.
+    - Locally: reads from .env file
+    - On EC2: reads from AWS Secrets Manager when USE_AWS_SECRETS=true
     """
     if LOAD_DOTENV is not None:
         LOAD_DOTENV()
+
     use_postgres = os.getenv("USE_POSTGRES", "").lower() in {"1", "true", "yes", "on"}
+
     if use_postgres:
         return get_postgres_connection()
-    return DBLayer()
+
+    raise RuntimeError("USE_POSTGRES is not set. Add USE_POSTGRES=true to your .env file.")
 
 
 def get_opensearch_connection() -> OpenSearch:
