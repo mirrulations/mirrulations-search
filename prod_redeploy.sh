@@ -12,11 +12,7 @@ if [ ! -d ".venv" ]; then
     ./.venv/bin/pip install -r requirements.txt
 fi
 
-sudo ln -sf "${PROJECT_ROOT}/.venv/bin/certbot" /usr/bin/certbot
-
 sudo systemctl stop mirrsearch 2>/dev/null || true
-
-sudo .venv/bin/certbot certonly --standalone -d "${DOMAIN}"
 
 sudo cp "${PROJECT_ROOT}/${MIRRSEARCH_SERVICE}" "${MIRRSEARCH_SERVICE_PATH}"
 sudo systemctl daemon-reload
