@@ -1,45 +1,92 @@
+
+@import url('https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,100;0,300;0,400;0,700;0,900;1,100;1,300;1,400;1,700;1,900&display=swap');
+
+
+
 .container {
-	max-width: 960px;
-	margin: 2rem auto;
-	padding: 0 1rem;
-	font-family: Arial, sans-serif;
+font-family: "Lato", sans-serif;
+  max-width: 1100px;
+  margin: 4rem auto;
+  padding: 3rem;
+  background: #ffffff;
+  border-radius: 20px;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.06);
 }
 
 h1 {
-	margin-bottom: 1rem;
+  font-size: 2.5rem;
+  font-weight: 600;
+  margin-bottom: 2rem;
+  letter-spacing: -0.5px;
 }
 
 .search-box {
-	display: grid;
-	grid-template-columns: 1fr 180px 180px auto;
-	gap: 0.5rem;
-	align-items: center;
-	margin-bottom: 1rem;
+  display: grid;
+  grid-template-columns: 1fr 180px 180px auto;
+  gap: 1rem;
+  margin-bottom: 2rem;
 }
 
 .search-box input,
-.search-box select,
-.search-box button {
-	padding: 0.6rem 0.75rem;
-	font-size: 0.95rem;
+.search-box select {
+  padding: 0.8rem 1rem;
+  border-radius: 12px;
+  border: 1px solid #e5e7eb;
+  background: #f9fafb;
+  font-size: 0.95rem;
+  transition: all 0.2s ease;
+}
+
+.search-box input:focus,
+.search-box select:focus {
+  outline: none;
+  border-color: #6366f1;
+  background: #ffffff;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
 }
 
 .search-box button {
-	cursor: pointer;
+  padding: 0.8rem 1.4rem;
+  border-radius: 999px;
+  border: none;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.25s ease;
+}
+
+.search-box button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 20px rgba(99, 102, 241, 0.25);
+}
+
+.search-box button:active {
+  transform: translateY(0);
+  box-shadow: none;
 }
 
 #output {
-	background: #f7f7f7;
-	border: 1px solid #ddd;
-	border-radius: 6px;
-	padding: 1rem;
-	overflow: auto;
-	min-height: 200px;
+  background: #f9fafb;
+  border-radius: 16px;
+  padding: 1.5rem;
+  min-height: 220px;
+  border: 1px solid #e5e7eb;
+  font-size: 0.9rem;
+  overflow: auto;
+  white-space: pre-wrap;
 }
 
-@media (max-width: 700px) {
-	.search-box {
-		grid-template-columns: 1fr;
-	}
-}
+@media (max-width: 900px) {
+  .search-box {
+    grid-template-columns: 1fr;
+  }
 
+  .container {
+    padding: 2rem;
+  }
+
+  h1 {
+    font-size: 2rem;
+  }
+}
