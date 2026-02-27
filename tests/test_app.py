@@ -170,4 +170,3 @@ def test_search_with_agency_and_filter(client):  # pylint: disable=redefined-out
     for doc in results:
         assert doc['agency_id'] == 'CMS'
         assert doc['document_type'] == 'Proposed Rule'
-
