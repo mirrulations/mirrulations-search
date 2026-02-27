@@ -1,7 +1,7 @@
 openapi: "3.0.0"
 info:
   title: Mirrulations Search API
-  version: "1.1.0"
+  version: "1.2.0"
   description: API for searching regulatory documents in the Mirrulations system
 
 paths:
@@ -16,7 +16,7 @@ paths:
           schema:
             type: string
           example: "Medicare"
-        - name: filter
+        - name: document_type
           in: query
           description: Filter results by document type
           required: false
@@ -30,6 +30,13 @@ paths:
           schema:
             type: string
           example: "CMS"
+        - name: cfr_part
+          in: query
+          description: Filter results by CFR part
+          required: false
+          schema:
+            type: string
+          example: "42 CFR Parts 413 and 512"
       responses:
         "200":
           description: A list of matching documents
