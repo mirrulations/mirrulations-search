@@ -31,6 +31,14 @@ def create_app(dist_dir=None, db_layer=None):
                                     agency_param,
                                     cfr_part_param))
 
+    @flask_app.route("/login")
+    def login():
+        return jsonify({"error": "Login not implemented"}), 501
+
+    @flask_app.route("/logout")
+    def logout():
+        return jsonify({"error": "Logout not implemented"}), 501
+
     return flask_app
 
 app = create_app()
