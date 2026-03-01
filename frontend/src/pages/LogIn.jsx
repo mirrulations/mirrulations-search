@@ -15,20 +15,24 @@ const LogIn = () => {
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.7, duration: 1, ease: "easeInOut" }}
                     className='login-title'
-                >LOG IN</motion.h2>
+                >Mirrulations Search</motion.h2>
                 <div className='inputs-div'>
-                    <motion.input type="email" placeholder="Email"
+                    <motion.div
+                        className='placeholder-div'
                         initial={{ opacity: 0, y: -20 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: 1.2, duration: 1, ease: "easeInOut" }}
-                    />
-                    <motion.input type="password" placeholder="Password"
+
+                    ><a href='https://github.com/mirrulations' target='_blank'>Github Page</a></motion.div>
+                    <motion.div
+                        className='placeholder-div'
+
                         initial={{ opacity: 0, y: -20 }}
                         animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: 1.6, duration: 1, ease: "easeInOut" }}
-                    />
-                    <button className='login-btn'>LOG IN</button>
-                    <h2 className='or-login'>Or login with</h2>
+                        transition={{ delay: 1.7, duration: 1, ease: "easeInOut" }}
+
+                    ><a href='https://mirrulations.github.io/mirrulations-landing-page/' target='_blank'>Landing Page</a></motion.div>
+                    <h2 className='or-login'>LOGIN WITH</h2>
 
                     {/**Under here is just a cool google button I found online*/}
 

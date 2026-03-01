@@ -27,8 +27,8 @@
 .login-title {
     margin-top: 80px;
     text-align: center;
-    margin-bottom: 50px;
-    font-weight: 800;
+    margin-bottom: 70px;
+    font-weight: 700;
     font-size: 35px;
 }
 
@@ -49,15 +49,32 @@
 
 }
 
-.login-box input {
+.placeholder-div{
     width: 95%;
     border: none;
     border-radius: 0px;
     height: 60px;
-    background-color: rgba(162, 160, 160, 0.17);
     font-size: large;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background: #6366f1;
+    transition: ease-in-out 0.4s;
+
 
 }
+
+.placeholder-div:hover {
+  scale: 1.03;
+}
+
+
+.placeholder-div a {
+  text-decoration: none;
+  color: white;
+}
+
+
 
 .login-btn {
     margin-top: 40px;
