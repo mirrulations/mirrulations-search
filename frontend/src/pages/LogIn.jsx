@@ -17,23 +17,7 @@ const LogIn = () => {
                     className='login-title'
                 >Mirrulations Search</motion.h2>
                 <div className='inputs-div'>
-                    <motion.div
-                        className='placeholder-div'
-                        initial={{ opacity: 0, y: -20 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: 1.2, duration: 1, ease: "easeInOut" }}
-
-                    ><a href='https://github.com/mirrulations' target='_blank'>Github Page</a></motion.div>
-                    <motion.div
-                        className='placeholder-div'
-
-                        initial={{ opacity: 0, y: -20 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: 1.7, duration: 1, ease: "easeInOut" }}
-
-                    ><a href='https://mirrulations.github.io/mirrulations-landing-page/' target='_blank'>Landing Page</a></motion.div>
-                    <h2 className='or-login'>LOGIN WITH</h2>
-
+                    <p>Log in using your Google account</p>
                     {/**Under here is just a cool google button I found online*/}
 
                     <button className="google-button">
@@ -43,7 +27,7 @@ const LogIn = () => {
                             <path fill="#FBBC05" d="M56.281 156.37c-2.756-8.123-4.351-16.827-4.351-25.82 0-8.994 1.595-17.697 4.206-25.82l-.073-1.73L15.26 71.312l-1.335.635C5.077 89.644 0 109.517 0 130.55s5.077 40.905 13.925 58.602l42.356-32.782" class="yellow"></path>
                             <path fill="#EB4335" d="M130.55 50.479c24.514 0 41.05 10.589 50.479 19.438l36.844-35.974C195.245 12.91 165.798 0 130.55 0 79.49 0 35.393 29.301 13.925 71.947l42.211 32.783c10.59-31.477 39.891-54.251 74.414-54.251" class="red"></path>
                         </svg>
-                        <span className="text">Continue with Google</span>
+                        <span className="text">Google</span>
                     </button>
                 </div>
             </div>
