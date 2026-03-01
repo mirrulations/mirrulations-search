@@ -132,15 +132,13 @@ def test_search_postgres_branch_filter_and_agency():
 
 
 def test_search_postgres_branch_cfr_part():
-    """cfr_part_param adds correct clause and param"""
+    """cfr_part_param is accepted but currently commented out pending cfrparts table in RDS"""
     rows = [("D1", "Title One", "42", "CMS", "Proposed Rule")]
     db = DBLayer(conn=_FakeConn(rows))
-
     db.search("", cfr_part_param="42")
-
     sql, params = db.conn.cursor_obj.executed
-    assert "c.cfrpart ILIKE %s" in sql
-    assert "%42%" in params
+    assert "LIMIT 50" in sql
+    assert params == ["%%", "%%"]
 
 
 # --- Factory function tests ---

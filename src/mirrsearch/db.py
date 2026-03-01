@@ -34,7 +34,7 @@ class DBLayer:
             return []
         return self._search_postgres(query, document_type_param, agency, cfr_part_param)
 
-    def _search_postgres(
+    def _search_postgres(  # pylint: disable=unused-argument
             self,
             query: str,
             document_type_param: str = None,
@@ -42,9 +42,9 @@ class DBLayer:
             cfr_part_param: str = None) \
             -> List[Dict[str, Any]]:
         sql = """
-            SELECT d.docket_id, d.document_title, c.cfrpart, d.agency_id, d.document_type
+            SELECT d.docket_id, d.document_title, NULL AS cfrpart, d.agency_id, d.document_type
             FROM documents d
-            LEFT JOIN cfrparts c ON d.document_id = c.document_id
+            -- LEFT JOIN cfrparts c ON d.document_id = c.document_id
             WHERE (d.docket_id ILIKE %s OR d.document_title ILIKE %s)
         """
         params = ([f"%{(query or '').strip().lower()}%"] * 2
@@ -55,13 +55,16 @@ class DBLayer:
             sql += " AND d.document_type = %s"
             params.append(document_type_param)
 
-        if cfr_part_param:
-            sql += " AND c.cfrpart ILIKE %s"
-            params.append(f"%{cfr_part_param}%")
+        # cfr_part_param filter commented out until cfrparts table is available in RDS
+        # if cfr_part_param:
+        #     sql += " AND c.cfrpart ILIKE %s"
+        #     params.append(f"%{cfr_part_param}%")
 
         if agency:
             sql += " AND d.agency_id ILIKE %s"
             params.append(f"%{agency}%")
+
+        sql += " LIMIT 50"
 
         with self.conn.cursor() as cur:
             cur.execute(sql, params)

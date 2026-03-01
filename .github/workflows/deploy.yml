@@ -32,8 +32,12 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
+          envs: AWS_REGION,AWS_SECRET_NAME
           script: |
             cd /home/ec2-user/mirrulations-search
             git fetch origin main
             git reset --hard origin/main
             ./prod_redeploy.sh
+        env:
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          AWS_SECRET_NAME: ${{ secrets.AWS_SECRET_NAME }}

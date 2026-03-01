@@ -7,6 +7,14 @@ DOMAIN="dev.mirrulations.org"
 
 cd "${PROJECT_ROOT}"
 
+# Inject AWS secrets config into db.py if placeholders still exist
+if grep -q "YOUR_REGION" src/mirrsearch/db.py; then
+    sed -i "s/YOUR_REGION/${AWS_REGION}/" src/mirrsearch/db.py
+fi
+if grep -q "YOUR_SECRET_NAME" src/mirrsearch/db.py; then
+    sed -i "s|YOUR_SECRET_NAME|${AWS_SECRET_NAME}|" src/mirrsearch/db.py
+fi
+
 # Create .env if missing
 if [[ ! -f .env ]]; then
     cat > .env <<'ENVEOF'
