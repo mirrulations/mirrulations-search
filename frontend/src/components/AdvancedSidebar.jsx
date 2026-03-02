@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { motion } from "motion/react"
 
 
@@ -49,7 +49,91 @@ export default function AdvancedSidebar({
 }) {
   const docTypes = ["Proposed Rule", "Final Rule", "Notice"];
   const statuses = ["Open", "Closed", "Pending"];
-  const cfrParts = Array.from({ length: 50 }, (_, i) => i + 1);
+  const [agencyOrder, setAgencyOrder] = useState([]);
+  const cfrParts = Array.from({ length: 200 }, (_, i) => i + 1);
+  const [cfrSearch, setCfrSearch] = useState("");
+  const [cfrOrder, setCfrOrder] = useState(cfrParts);
+
+  const orderedAgencies = useMemo(() => {
+    const order =
+      agencyOrder.length > 0 ? agencyOrder : agenciesToShow.map((a) => a.code);
+
+    return order
+      .map((code) => agenciesToShow.find((a) => a.code === code))
+      .filter(Boolean);
+  }, [agenciesToShow, agencyOrder]);
+
+  const visibleAgencies = useMemo(() => {
+    if (agencySearch.trim()) {
+      return orderedAgencies;
+    }
+
+    const minVisible = Math.max(5, selectedAgencies.size);
+    return orderedAgencies.slice(0, minVisible);
+  }, [agencySearch, orderedAgencies, selectedAgencies.size]);
+
+  const toggleAgency = (code) => {
+    setSelectedAgencies((prev) => {
+      const next = new Set(prev);
+      if (next.has(code)) {
+        next.delete(code);
+      } else {
+        next.add(code);
+      }
+      return next;
+    });
+
+    setAgencyOrder((prev) => {
+      const base = prev.length > 0 ? prev : agenciesToShow.map((a) => a.code);
+      return [code, ...base.filter((item) => item !== code)];
+    });
+  };
+
+  const filteredCfrParts = useMemo(() => {
+    const rawQuery = cfrSearch.trim().toLowerCase();
+    if (!rawQuery) {
+      return cfrOrder;
+    }
+
+    const numericQuery = rawQuery.replace(/[^0-9]/g, "");
+
+    return cfrOrder.filter((part) => {
+      const partText = String(part);
+
+      if (numericQuery) {
+        return partText.includes(numericQuery);
+      }
+
+      return (
+        partText.includes(rawQuery) ||
+        `part ${partText}`.includes(rawQuery) ||
+        `cfr part ${partText}`.includes(rawQuery)
+      );
+    });
+  }, [cfrSearch, cfrOrder]);
+
+  const visibleCfrParts = useMemo(() => {
+    if (cfrSearch.trim()) {
+      return filteredCfrParts;
+    }
+
+    const minVisible = Math.max(5, selectedCfrParts.size);
+    return filteredCfrParts.slice(0, minVisible);
+  }, [cfrSearch, filteredCfrParts, selectedCfrParts.size]);
+
+  const toggleCfrPart = (part) => {
+    setSelectedCfrParts((prev) => {
+      const next = new Set(prev);
+      if (next.has(part)) {
+        next.delete(part);
+      } else {
+        next.add(part);
+      }
+      return next;
+    });
+
+    setCfrOrder((prev) => [part, ...prev.filter((p) => p !== part)]);
+  };
 
   return (
     <motion.aside className="sidebar"
@@ -139,18 +223,12 @@ export default function AdvancedSidebar({
             />
 
             <div className="agencyListStatic">
-              {agenciesToShow.slice(0, 6).map((a) => (
+              {visibleAgencies.map((a) => (
                 <label key={a.code} className="check">
                   <input
                     type="checkbox"
                     checked={selectedAgencies.has(a.code)}
-                    onChange={() =>
-                      setSelectedAgencies(
-                        selectedAgencies.has(a.code)
-                          ? new Set()
-                          : new Set([a.code])
-                      )
-                    }
+                    onChange={() => toggleAgency(a.code)}
                   />
                   <span>
                     {a.code} — {a.name}
@@ -158,28 +236,40 @@ export default function AdvancedSidebar({
                 </label>
               ))}
             </div>
+
+            {!agencySearch.trim() && selectedAgencies.size <= 5 && (
+              <div className="hintText">
+                Showing top 5 agencies. Selecting an agency moves it to the top.
+              </div>
+            )}
           </CollapsibleSection>
 
           {/* CFR Part */}
           <CollapsibleSection title="CFR Part">
+            <input
+              value={cfrSearch}
+              onChange={(e) => setCfrSearch(e.target.value)}
+              placeholder="Search CFR part number…"
+            />
+
             <div className="agencyListStatic">
-              {cfrParts.map((part) => (
+              {visibleCfrParts.map((part) => (
                 <label key={part} className="check">
                   <input
                     type="checkbox"
                     checked={selectedCfrParts.has(part)}
-                    onChange={() =>
-                      setSelectedCfrParts(
-                        selectedCfrParts.has(part)
-                          ? new Set()
-                          : new Set([part])
-                      )
-                    }
+                    onChange={() => toggleCfrPart(part)}
                   />
                   <span>Part {part}</span>
                 </label>
               ))}
             </div>
+
+            {!cfrSearch.trim() && selectedCfrParts.size <= 5 && (
+              <div className="hintText">
+                Showing top 5 parts. Selecting a part moves it to the top.
+              </div>
+            )}
           </CollapsibleSection>
 
           {/* Doc type */}
