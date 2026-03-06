@@ -1,6 +1,11 @@
 import {ColorRing} from 'react-loader-spinner'
 const ECFR_URL = "https://www.ecfr.gov";
 
+function getCfrTitle(link) {
+  const match = link.match(/title-(\d+)/);
+  return match ? match[1] : null;
+}
+
 export default function ResultsPanel({ results, loading, hasSearched }) {
 
   if (loading) {
@@ -38,23 +43,28 @@ export default function ResultsPanel({ results, loading, hasSearched }) {
             <p><strong>Agency:</strong> {item.agency_id}</p>
             <p><strong>Docket-ID:</strong> {item.docket_id}</p>
             <p><strong>Docket type:</strong> {item.docket_type}</p>
-           <p>
+            <p>
             <strong>CFR:</strong>{" "}
             {item.cfrPart && item.cfrPart.length > 0 ? (
-              item.cfrPart.map((p, idx) => (
-                <span key={idx}>
-                  <a href={p.link} target="_blank" rel="noopener noreferrer">
-                    {p.part}
-                  </a>
-                  {idx < item.cfrPart.length - 1 && ", "}
-                </span>
-              ))
+              item.cfrPart.map((p, idx) => {
+                const title = getCfrTitle(p.link);
+
+                return (
+                  <span key={idx}>
+                    {title} Part{" "}
+                    <a href={p.link} target="_blank" rel="noopener noreferrer">
+                      {p.part}
+                    </a>
+                    {idx < item.cfrPart.length - 1 && ", "}
+                  </span>
+                );
+              })
             ) : (
               <a href={ECFR_URL} target="_blank" rel="noopener noreferrer">
                 None
               </a>
             )}
-            </p>
+          </p>
             <p><strong>Last modified date:</strong> {item.modify_date}</p>
           </div>
 
