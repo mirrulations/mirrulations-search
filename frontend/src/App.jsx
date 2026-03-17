@@ -13,8 +13,8 @@ const [query, setQuery] = useState("");
 const [docType, setDocType] = useState("");
 const [results, setResults] = useState([]);
 const [advOpen, setAdvOpen] = useState(true);
-const [dateFrom, setDateFrom] = useState("");
-const [dateTo, setDateTo] = useState("");
+const [yearFrom, setYearFrom] = useState("");
+const [yearTo, setYearTo] = useState("");
 const [agencySearch, setAgencySearch] = useState("");
 const [selectedAgencies, setSelectedAgencies] = useState(new Set());
 const [status, setStatus] = useState(new Set());
@@ -46,8 +46,8 @@ return q
       : TOP_AGENCIES;
   }, [agencySearch]);
 const activeCount =
-    (dateFrom ? 1 : 0) +
-    (dateTo ? 1 : 0) +
+    (yearFrom ? 1 : 0) +
+    (yearTo ? 1 : 0) +
     selectedAgencies.size +
     status.size +
     selectedCfrParts.size;
@@ -67,8 +67,8 @@ const activeCount =
           selectedAgencyList,
           selectedCfrList,
           newPage,
-          dateFrom,
-          dateTo,   
+          yearFrom,
+          yearTo,   
 
         );
     
@@ -84,14 +84,14 @@ const activeCount =
     };
 
 const advancedPayload = {
-    dateFrom,
-    dateTo,
+    yearFrom,
+    yearTo,
     agencies: Array.from(selectedAgencies),
     status: Array.from(status),
   };
 const clearAdvanced = () => {
-    setDateFrom("");
-    setDateTo("");
+    setYearFrom("");
+    setYearTo("");
     setAgencySearch("");
     setSelectedAgencies(new Set());
     setStatus(new Set());
@@ -101,6 +101,12 @@ const clearAdvanced = () => {
 
   useEffect(()=> {
     console.log(results)
+    console.log("Sending filters:", {
+  query,
+  docType,
+  yearFrom,
+  yearTo,
+});
   },[results])
 
 return (
@@ -113,10 +119,10 @@ return (
 <AdvancedSidebar
 advOpen={advOpen}
 setAdvOpen={setAdvOpen}
- dateFrom={dateFrom}
-  setDateFrom={setDateFrom}
-  dateTo={dateTo}
-  setDateTo={setDateTo}
+ yearFrom={yearFrom}
+  setYearFrom={setYearFrom}
+  yearTo={yearTo}
+  setYearTo={setYearTo}
 agencySearch={agencySearch}
 setAgencySearch={setAgencySearch}
 agenciesToShow={agenciesToShow}

@@ -28,10 +28,10 @@ function CollapsibleSection({ title, defaultOpen = true, children, right }) {
 export default function AdvancedSidebar({
   advOpen,
   setAdvOpen,
-  //yearFrom,
-  //setYearFrom,
-  //yearTo,
-  //setYearTo,
+  yearFrom,
+  setYearFrom,
+  yearTo,
+  setYearTo,
   agencySearch,
   setAgencySearch,
   agenciesToShow,
@@ -161,7 +161,10 @@ export default function AdvancedSidebar({
 
       {advOpen && (
         <div className="advBody">
-          {/* Date 
+          
+
+          {/**Date Section */}
+
           <section className="section">
             <h3>Date Range</h3>
 
@@ -212,7 +215,7 @@ export default function AdvancedSidebar({
                 placeholder="To"
               />
             </div>
-          </section> */}
+          </section> 
 
           {/* Agency */}
           <CollapsibleSection title="Agency">
