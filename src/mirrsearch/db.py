@@ -102,6 +102,76 @@ class DBLayer:
                 }
             dockets[docket_id]["cfr_refs"][title]["cfrParts"][cfr_part] = link
 
+    def _search_documents_postgres(  # pylint: disable=too-many-locals
+            self, query: str, docket_type_param: str = None,
+            agency: List[str] = None,
+            cfr_part_param: List[str] = None) -> List[Dict[str, Any]]:
+        sql = """
+            SELECT DISTINCT
+                doc.document_id,
+                doc.document_title,
+                doc.agency_id,
+                doc.document_type,
+                doc.posted_date,
+                doc.docket_id,
+                cp.title,
+                cp.cfrPart,
+                l.link
+            FROM documents doc
+            LEFT JOIN cfrparts cp ON cp.document_id = doc.document_id
+            LEFT JOIN links l ON l.title = cp.title AND l.cfrPart = cp.cfrPart
+            WHERE doc.document_title ILIKE %s
+        """
+        params = [f"%{(query or '').strip().lower()}%"]
+
+        if docket_type_param:
+            sql += " AND doc.document_type = %s"
+            params.append(docket_type_param)
+
+        if agency:
+            clauses = " OR ".join("doc.agency_id ILIKE %s" for _ in agency)
+            sql += f" AND ({clauses})"
+            params.extend(f"%{a}%" for a in agency)
+
+        if cfr_part_param:
+            clauses = " OR ".join("cp.cfrPart ILIKE %s" for _ in cfr_part_param)
+            sql += f" AND ({clauses})"
+            params.extend(f"%{c}%" for c in cfr_part_param)
+
+        sql += " ORDER BY doc.posted_date DESC, doc.document_id, cp.title, cp.cfrPart LIMIT 50"
+
+        with self.conn.cursor() as cur:
+            cur.execute(sql, params)
+            documents = {}
+            for row in cur.fetchall():
+                self._process_document_row(documents, row)
+            return [
+                {**d, "cfr_refs": list(d["cfr_refs"].values())}
+                for d in documents.values()
+            ]
+
+    @staticmethod
+    def _process_document_row(documents, row):
+        document_id = row[0]
+        if document_id not in documents:
+            documents[document_id] = {
+                "document_id": row[0],
+                "document_title": row[1],
+                "agency_id": row[2],
+                "document_type": row[3],
+                "posted_date": row[4],
+                "docket_id": row[5],
+                "cfr_refs": {}
+            }
+        title, cfr_part, link = row[6], row[7], row[8]
+        if title is not None and cfr_part is not None:
+            if title not in documents[document_id]["cfr_refs"]:
+                documents[document_id]["cfr_refs"][title] = {
+                    "title": title,
+                    "cfrParts": {}
+                }
+            documents[document_id]["cfr_refs"][title]["cfrParts"][cfr_part] = link
+
 
 def _get_secrets_from_aws() -> Dict[str, str]:
     if boto3 is None:
