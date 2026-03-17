@@ -63,7 +63,10 @@ const activeCount =
           docType,
           selectedAgencyList,
           selectedCfrList,
+          yearFrom,   
+          yearTo,
           newPage
+
         );
     
         setResults(data.results);

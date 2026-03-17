@@ -1,4 +1,4 @@
-export async function searchDockets(query, docket_type = '', agency = [], cfr_part = [], page = 1) {
+export async function searchDockets(query, docket_type = '', agency = [], cfr_part = [], page = 1, yearFrom = '', yearTo = '') {
 
 	// URLSearchParams make valid params that allow for spaces, special chars, etc
 	const params = new URLSearchParams()
@@ -11,6 +11,13 @@ export async function searchDockets(query, docket_type = '', agency = [], cfr_pa
 	if (docket_type) {
 		params.append("docket_type", docket_type)
 	}
+	if (yearFrom) {
+	    params.append("start_date", `${yearFrom}-01-01`)
+	}
+	if (yearTo)  {
+		 params.append("end_date", `${yearTo}-12-31`)
+	}
+
 
 	const response = await fetch(
         `/search/?${params.toString()}`
