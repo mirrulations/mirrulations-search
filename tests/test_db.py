@@ -365,6 +365,21 @@ def test_search_documents_postgres_agency_filter():
     assert results[0]["agency_id"] == "CMS"
 
 
+def test_search_documents_postgres_document_type_filter():
+    """Document type filter adds exact match clause and returns matching documents"""
+    rows = [
+        ("DOC-001", "Test Document", "CMS", "Rule",
+         "2024-01-01", "DOCKET-001", "Title 42", "42", "http://link"),
+    ]
+    db = DBLayer(conn=_FakeConn(rows))
+    results = db._search_documents_postgres("", docket_type_param="Rule")
+    sql, params = db.conn.cursor_obj.executed
+    assert "doc.document_type = %s" in sql
+    assert params == ["%%", "Rule"]
+    assert len(results) == 1
+    assert results[0]["document_type"] == "Rule"
+
+
 # --- Factory function tests ---
 
 def test_get_postgres_connection_uses_env_and_dotenv(monkeypatch):
