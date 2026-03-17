@@ -316,6 +316,23 @@ def test_search_documents_postgres_multiple_cfr_parts_same_title():
     assert len(cfr_ref["cfrParts"]) == 2
 
 
+def test_search_documents_postgres_multiple_titles_same_document():
+    """Multiple cfr titles for the same document produce multiple cfr_refs"""
+    rows = [
+        ("DOC-001", "Test Document", "CMS", "Rule",
+         "2024-01-01", "DOCKET-001", "Title 42", "42", "http://link42"),
+        ("DOC-001", "Test Document", "CMS", "Rule",
+         "2024-01-01", "DOCKET-001", "Title 45", "45", "http://link45"),
+    ]
+    db = DBLayer(conn=_FakeConn(rows))
+
+    results = db._search_documents_postgres("test")
+
+    assert len(results) == 1
+    titles = {ref["title"] for ref in results[0]["cfr_refs"]}
+    assert titles == {"Title 42", "Title 45"}
+
+
 # --- Factory function tests ---
 
 def test_get_postgres_connection_uses_env_and_dotenv(monkeypatch):
