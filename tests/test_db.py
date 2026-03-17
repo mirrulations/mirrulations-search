@@ -296,6 +296,26 @@ def test_search_documents_postgres_single_document_single_cfr():
     assert results[0]["cfr_refs"][0]["cfrParts"] == {"42": "http://link"}
 
 
+def test_search_documents_postgres_multiple_cfr_parts_same_title():
+    """Multiple rows for same document+title aggregate cfrParts without duplicates"""
+    rows = [
+        ("DOC-001", "Test Document", "CMS", "Rule",
+         "2024-01-01", "DOCKET-001", "Title 42", "42", "http://link"),
+        ("DOC-001", "Test Document", "CMS", "Rule",
+         "2024-01-01", "DOCKET-001", "Title 42", "43", "http://link2"),
+    ]
+    db = DBLayer(conn=_FakeConn(rows))
+
+    results = db._search_documents_postgres("test")
+
+    assert len(results) == 1
+    cfr_ref = results[0]["cfr_refs"][0]
+    assert cfr_ref["title"] == "Title 42"
+    assert "42" in cfr_ref["cfrParts"]
+    assert "43" in cfr_ref["cfrParts"]
+    assert len(cfr_ref["cfrParts"]) == 2
+
+
 # --- Factory function tests ---
 
 def test_get_postgres_connection_uses_env_and_dotenv(monkeypatch):
