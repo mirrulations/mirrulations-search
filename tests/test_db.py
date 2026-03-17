@@ -333,6 +333,23 @@ def test_search_documents_postgres_multiple_titles_same_document():
     assert titles == {"Title 42", "Title 45"}
 
 
+def test_search_documents_postgres_multiple_documents():
+    """Rows for different documents produce separate document entries"""
+    rows = [
+        ("DOC-001", "First Document", "CMS", "Rule",
+         "2024-01-01", "DOCKET-001", "Title 42", "42", "http://a"),
+        ("DOC-002", "Second Document", "EPA", "Rule",
+         "2024-02-01", "DOCKET-002", "Title 40", "40", "http://b"),
+    ]
+    db = DBLayer(conn=_FakeConn(rows))
+
+    results = db._search_documents_postgres("document")
+
+    assert len(results) == 2
+    ids = {r["document_id"] for r in results}
+    assert ids == {"DOC-001", "DOC-002"}
+
+
 # --- Factory function tests ---
 
 def test_get_postgres_connection_uses_env_and_dotenv(monkeypatch):
