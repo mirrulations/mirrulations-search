@@ -276,6 +276,26 @@ def test_search_documents_postgres_empty_results():
     assert results == []
 
 
+def test_search_documents_postgres_single_document_single_cfr():
+    """Single row returns one document with one cfr_ref"""
+    rows = [("DOC-001", "Test Document", "CMS", "Rule",
+             "2024-01-01", "DOCKET-001", "Title 42", "42", "http://link")]
+    db = DBLayer(conn=_FakeConn(rows))
+
+    results = db._search_documents_postgres("test")
+
+    assert len(results) == 1
+    assert results[0]["document_id"] == "DOC-001"
+    assert results[0]["document_title"] == "Test Document"
+    assert results[0]["agency_id"] == "CMS"
+    assert results[0]["document_type"] == "Rule"
+    assert results[0]["posted_date"] == "2024-01-01"
+    assert results[0]["docket_id"] == "DOCKET-001"
+    assert len(results[0]["cfr_refs"]) == 1
+    assert results[0]["cfr_refs"][0]["title"] == "Title 42"
+    assert results[0]["cfr_refs"][0]["cfrParts"] == {"42": "http://link"}
+
+
 # --- Factory function tests ---
 
 def test_get_postgres_connection_uses_env_and_dotenv(monkeypatch):
