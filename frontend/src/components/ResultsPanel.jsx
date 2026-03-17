@@ -5,7 +5,7 @@ export default function ResultsPanel({ results, loading, hasSearched }) {
 
 
 
-  // This function down here basically turns Mon, "24 Nov 2025 16:44:12 GMT" to "Nov 24, 2025"
+  // This function down here basically turns Mon, "24 Nov 2025 16:44:12 GMT" to "Nov 24, 2025."
 
   function formatDate(dateStr) {
     if (!dateStr) return "Unknown";
