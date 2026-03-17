@@ -395,6 +395,31 @@ def test_search_documents_postgres_cfr_part_filter():
     assert results[0]["cfr_refs"][0]["cfrParts"] == {"42": "http://link"}
 
 
+def test_search_documents_postgres_all_filters():
+    """All filters add their clauses and params in order and return matching documents"""
+    rows = [
+        ("DOC-001", "Clean Air Document", "EPA", "Rule",
+         "2024-01-01", "DOCKET-001", "Title 42", "42", "http://link"),
+    ]
+    db = DBLayer(conn=_FakeConn(rows))
+    results = db._search_documents_postgres(
+        "clean air",
+        docket_type_param="Rule",
+        agency=["EPA"],
+        cfr_part_param=["42"]
+    )
+    sql, params = db.conn.cursor_obj.executed
+    assert "doc.document_type = %s" in sql
+    assert "agency_id ILIKE %s" in sql
+    assert "cp.cfrPart ILIKE %s" in sql
+    assert params == ["%clean air%", "Rule", "%EPA%", "%42%"]
+    assert len(results) == 1
+    assert results[0]["document_title"] == "Clean Air Document"
+    assert results[0]["agency_id"] == "EPA"
+    assert results[0]["document_type"] == "Rule"
+    assert results[0]["cfr_refs"][0]["cfrParts"] == {"42": "http://link"}
+
+
 # --- Factory function tests ---
 
 def test_get_postgres_connection_uses_env_and_dotenv(monkeypatch):
