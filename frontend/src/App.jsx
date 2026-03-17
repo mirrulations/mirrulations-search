@@ -13,8 +13,8 @@ const [query, setQuery] = useState("");
 const [docType, setDocType] = useState("");
 const [results, setResults] = useState([]);
 const [advOpen, setAdvOpen] = useState(true);
-const [yearFrom, setYearFrom] = useState("");
-const [yearTo, setYearTo] = useState("");
+const [dateFrom, setDateFrom] = useState("");
+const [dateTo, setDateTo] = useState("");
 const [agencySearch, setAgencySearch] = useState("");
 const [selectedAgencies, setSelectedAgencies] = useState(new Set());
 const [status, setStatus] = useState(new Set());
@@ -23,6 +23,9 @@ const [page, setPage] = useState(1);
 const [pagination, setPagination] = useState(null);
 const [loading, setLoading] = useState(false);
 const [hasSearched, setHasSearched] = useState(false);
+
+
+
 
 const TOP_AGENCIES = [
     { code: "EPA", name: "Environmental Protection Agency" },
@@ -43,8 +46,8 @@ return q
       : TOP_AGENCIES;
   }, [agencySearch]);
 const activeCount =
-    (yearFrom ? 1 : 0) +
-    (yearTo ? 1 : 0) +
+    (dateFrom ? 1 : 0) +
+    (dateTo ? 1 : 0) +
     selectedAgencies.size +
     status.size +
     selectedCfrParts.size;
@@ -63,9 +66,9 @@ const activeCount =
           docType,
           selectedAgencyList,
           selectedCfrList,
-          yearFrom,   
-          yearTo,
-          newPage
+          newPage,
+          dateFrom,
+          dateTo,   
 
         );
     
@@ -81,14 +84,14 @@ const activeCount =
     };
 
 const advancedPayload = {
-    yearFrom,
-    yearTo,
+    dateFrom,
+    dateTo,
     agencies: Array.from(selectedAgencies),
     status: Array.from(status),
   };
 const clearAdvanced = () => {
-    setYearFrom("");
-    setYearTo("");
+    setDateFrom("");
+    setDateTo("");
     setAgencySearch("");
     setSelectedAgencies(new Set());
     setStatus(new Set());
@@ -110,10 +113,10 @@ return (
 <AdvancedSidebar
 advOpen={advOpen}
 setAdvOpen={setAdvOpen}
-yearFrom={yearFrom}
-setYearFrom={setYearFrom}
-yearTo={yearTo}
-setYearTo={setYearTo}
+ dateFrom={dateFrom}
+  setDateFrom={setDateFrom}
+  dateTo={dateTo}
+  setDateTo={setDateTo}
 agencySearch={agencySearch}
 setAgencySearch={setAgencySearch}
 agenciesToShow={agenciesToShow}

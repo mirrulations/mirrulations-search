@@ -1,7 +1,22 @@
-import {ColorRing} from 'react-loader-spinner'
+import { ColorRing } from 'react-loader-spinner'
 const ECFR_URL = "https://www.ecfr.gov";
 
 export default function ResultsPanel({ results, loading, hasSearched }) {
+
+
+
+  // This function down here basically turns Mon, "24 Nov 2025 16:44:12 GMT" to "Nov 24, 2025"
+
+  function formatDate(dateStr) {
+    if (!dateStr) return "Unknown";
+    const date = new Date(dateStr);
+    return date.toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
+  }
+
 
   if (loading) {
     return (
@@ -38,24 +53,24 @@ export default function ResultsPanel({ results, loading, hasSearched }) {
             <p><strong>Agency:</strong> {item.agency_id}</p>
             <p><strong>Docket-ID:</strong> {item.docket_id}</p>
             <p><strong>Docket type:</strong> {item.docket_type}</p>
-           <p>
-            <strong>CFR:</strong>{" "}
-            {item.cfrPart && item.cfrPart.length > 0 ? (
-              item.cfrPart.map((p, idx) => (
-                <span key={idx}>
-                  <a href={p.link} target="_blank" rel="noopener noreferrer">
-                    {p.title != null ? `${p.title} Part ${p.part}` : p.part}
-                  </a>
-                  {idx < item.cfrPart.length - 1 && ", "}
-                </span>
-              ))
-            ) : (
-              <a href={ECFR_URL} target="_blank" rel="noopener noreferrer">
-                None
-              </a>
-            )}
+            <p>
+              <strong>CFR:</strong>{" "}
+              {item.cfrPart && item.cfrPart.length > 0 ? (
+                item.cfrPart.map((p, idx) => (
+                  <span key={idx}>
+                    <a href={p.link} target="_blank" rel="noopener noreferrer">
+                      {p.title != null ? `${p.title} Part ${p.part}` : p.part}
+                    </a>
+                    {idx < item.cfrPart.length - 1 && ", "}
+                  </span>
+                ))
+              ) : (
+                <a href={ECFR_URL} target="_blank" rel="noopener noreferrer">
+                  None
+                </a>
+              )}
             </p>
-            <p><strong>Last modified date:</strong> {item.modify_date}</p>
+            <p><strong>Last modified date:</strong> {formatDate(item.modify_date)}</p>
           </div>
 
           {item.summary && (

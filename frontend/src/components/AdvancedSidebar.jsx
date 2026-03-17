@@ -5,6 +5,7 @@ import { motion } from "motion/react"
 function CollapsibleSection({ title, defaultOpen = true, children, right }) {
   const [open, setOpen] = useState(defaultOpen);
 
+
   return (
     <section className="section">
       <button
@@ -26,12 +27,19 @@ function CollapsibleSection({ title, defaultOpen = true, children, right }) {
 }
 
 export default function AdvancedSidebar({
+
+
+
+
+
+
   advOpen,
   setAdvOpen,
-  yearFrom,
-  setYearFrom,
-  yearTo,
-  setYearTo,
+  dateFrom,        // renamed from yearFrom
+  setDateFrom,     // renamed from setYearFrom
+  dateTo,          // renamed from yearTo
+  setDateTo,       // renamed from setYearTo
+
   agencySearch,
   setAgencySearch,
   agenciesToShow,
@@ -50,6 +58,13 @@ export default function AdvancedSidebar({
   const docTypes = ["Rulemaking", "Nonrulemaking"];
   //const statuses = ["Open", "Closed", "Pending"];
   const [agencyOrder, setAgencyOrder] = useState([]);
+  const [dateMode, setDateMode] = useState("year");
+  const currentYear = new Date().getFullYear();
+  const years = Array.from(
+    { length: currentYear - 2000 + 1 },
+    (_, i) => currentYear - i
+  );
+
   /*const cfrParts = Array.from({ length: 200 }, (_, i) => i + 1);
   const [cfrSearch, setCfrSearch] = useState("");
   const [cfrOrder, setCfrOrder] = useState(cfrParts);*/
@@ -137,9 +152,9 @@ export default function AdvancedSidebar({
 
   return (
     <motion.aside className="sidebar"
-    initial={{ opacity: 0, y: -20 }}   
-    animate={{ opacity: 1, y: 0 }}     
-    transition={{ delay: 0.4 ,duration: 0.9, ease: "easeInOut" }}
+      initial={{ opacity: 0, y: -20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: 0.4, duration: 0.9, ease: "easeInOut" }}
     >
       <button
         className="advHeader"
@@ -161,58 +176,88 @@ export default function AdvancedSidebar({
 
       {advOpen && (
         <div className="advBody">
+
+          {/* Date Range*/}
+
+
           <section className="section">
             <h3>Date Range</h3>
 
             <div className="chipRow">
-              <button
-                type="button"
-                className="chip"
-                onClick={() => {
-                  setYearFrom("2021");
-                  setYearTo("2023");
-                }}
-              >
-                2021–2023
-              </button>
-
-              <button
-                type="button"
-                className="chip"
-                onClick={() => {
-                  setYearFrom("2024");
-                  setYearTo("2024");
-                }}
-              >
-                2024
-              </button>
-
-              <button
-                type="button"
-                className="chip"
-                onClick={() => {
-                  setYearFrom("");
-                  setYearTo("");
-                }}
-              >
+              <button type="button" className="chip" onClick={() => { setDateFrom(""); setDateTo(""); }}>
                 All time
               </button>
+              <button type="button" className="chip" onClick={() => {
+                const d = new Date();
+                d.setDate(d.getDate() - 30);
+                setDateFrom(d.toISOString().split("T")[0]);
+                setDateTo("");
+              }}>Last 30 days</button>
+              <button type="button" className="chip" onClick={() => {
+                const d = new Date();
+                d.setDate(d.getDate() - 90);
+                setDateFrom(d.toISOString().split("T")[0]);
+                setDateTo("");
+              }}>Last 90 days</button>
+              <button type="button" className="chip" onClick={() => { setDateFrom("2023-01-01"); setDateTo(""); }}>Since 2023</button>
+              <button type="button" className="chip" onClick={() => { setDateFrom("2024-01-01"); setDateTo(""); }}>Since 2024</button>
+              <button type="button" className="chip" onClick={() => { setDateFrom("2025-01-01"); setDateTo(""); }}>Since 2025</button>
             </div>
 
-            <div className="row">
-              <input
-                value={yearFrom}
-                onChange={(e) => setYearFrom(e.target.value)}
-                placeholder="From"
-              />
-              <input
-                value={yearTo}
-                onChange={(e) => setYearTo(e.target.value)}
-                placeholder="To"
-              />
+            {/* Mode toggle */}
+            <div className="chipRow" style={{ marginTop: "8px" }}>
+              <button
+                type="button"
+                className={`chip ${dateMode === "year" ? "chip-active" : ""}`}
+                onClick={() => { setDateMode("year"); setDateFrom(""); setDateTo(""); }}
+              >
+                By Year
+              </button>
+              <button
+                type="button"
+                className={`chip ${dateMode === "date" ? "chip-active" : ""}`}
+                onClick={() => { setDateMode("date"); setDateFrom(""); setDateTo(""); }}
+              >
+                By Date
+              </button>
             </div>
+
+            {dateMode === "year" ? (
+              <div className="row">
+                <label>
+                  From
+                  <select value={dateFrom ? new Date(dateFrom).getFullYear() : ""} onChange={(e) => setDateFrom(e.target.value ? `${e.target.value}-01-01` : "")}>
+                    <option value="">Any</option>
+                    {years.map((y) => <option key={y} value={y}>{y}</option>)}
+                  </select>
+                </label>
+                <label>
+                  To
+                  <select value={dateTo ? new Date(dateTo).getFullYear() : ""} onChange={(e) => setDateTo(e.target.value ? `${e.target.value}-12-31` : "")}>
+                    <option value="">Present</option>
+                    {years.map((y) => <option key={y} value={y}>{y}</option>)}
+                  </select>
+                </label>
+              </div>
+            ) : (
+              <div className="row">
+                <label>
+                  From
+                  <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+                </label>
+                <label>
+                  To
+                  <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+                </label>
+              </div>
+            )}
+
+            {dateFrom && !dateTo && (
+              <div className="hintText">
+                Showing results from {dateFrom} to present.
+              </div>
+            )}
           </section>
-
           {/* Agency */}
           <CollapsibleSection title="Agency">
             <input
