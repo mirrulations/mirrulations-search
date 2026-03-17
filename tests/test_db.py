@@ -267,6 +267,15 @@ def test_search_dockets_postgres_empty_query_uses_wildcard():
     assert params == ["%%"]
 
 
+# --- _search_documents_postgres tests ---
+
+def test_search_documents_postgres_empty_results():
+    """No rows returns an empty list"""
+    db = DBLayer(conn=_FakeConn([]))
+    results = db._search_documents_postgres("anything")
+    assert results == []
+
+
 # --- Factory function tests ---
 
 def test_get_postgres_connection_uses_env_and_dotenv(monkeypatch):
