@@ -350,6 +350,21 @@ def test_search_documents_postgres_multiple_documents():
     assert ids == {"DOC-001", "DOC-002"}
 
 
+def test_search_documents_postgres_agency_filter():
+    """Agency filter adds ILIKE clause and returns matching documents"""
+    rows = [
+        ("DOC-001", "Test Document", "CMS", "Rule",
+         "2024-01-01", "DOCKET-001", "Title 42", "42", "http://link"),
+    ]
+    db = DBLayer(conn=_FakeConn(rows))
+    results = db._search_documents_postgres("", agency=["CMS"])
+    sql, params = db.conn.cursor_obj.executed
+    assert "agency_id ILIKE %s" in sql
+    assert params == ["%%", "%CMS%"]
+    assert len(results) == 1
+    assert results[0]["agency_id"] == "CMS"
+
+
 # --- Factory function tests ---
 
 def test_get_postgres_connection_uses_env_and_dotenv(monkeypatch):
