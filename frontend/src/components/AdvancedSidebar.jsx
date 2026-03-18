@@ -200,6 +200,40 @@ const normalizeDate = (val, isEnd = false) => {
     >
       All time
     </button>
+    <button
+  type="button"
+  className="chip"
+  onClick={() => {
+    const end = new Date();
+    const start = new Date();
+    start.setFullYear(start.getFullYear() - 1);
+
+    const format = (d) => d.toISOString().split("T")[0];
+    setYearFrom(format(start));
+    setYearTo(format(end));
+    setOnchange([start, end]);
+  }}
+>
+  Past Year
+</button>
+
+<button
+  type="button"
+  className="chip"
+  onClick={() => {
+    const end = new Date();
+    const start = new Date();
+    start.setMonth(start.getMonth() - 6);
+
+    const format = (d) => d.toISOString().split("T")[0];
+    setYearFrom(format(start));
+    setYearTo(format(end));
+    setOnchange([start, end]);
+  }}
+>
+  Past 6 Months
+</button>
+
   </div>
 
   <div className="row">
