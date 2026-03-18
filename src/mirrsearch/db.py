@@ -31,8 +31,12 @@ class DBLayer:
             -> List[Dict[str, Any]]:
         if self.conn is None:
             return []
-        docket_matches = self._search_dockets_postgres(query, docket_type_param, agency, cfr_part_param)
-        document_matches = self._search_documents_postgres(query, docket_type_param, agency, cfr_part_param)
+        docket_matches = self._search_dockets_postgres(
+            query, docket_type_param, agency, cfr_part_param
+            )
+        #document_matches = self._search_documents_postgres(
+            #query, docket_type_param, agency, cfr_part_param
+            #)
         return docket_matches
 
     def _search_dockets_postgres(  # pylint: disable=too-many-locals
