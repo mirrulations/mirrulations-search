@@ -27,16 +27,23 @@ class DBLayer:
             query: str,
             docket_type_param: str = None,
             agency: List[str] = None,
-            cfr_part_param: List[str] = None) \
+            cfr_part_param: List[str] = None,
+            start_date: str = None,
+            end_date: str = None) \
             -> List[Dict[str, Any]]:
         if self.conn is None:
             return []
-        return self._search_dockets_postgres(query, docket_type_param, agency, cfr_part_param)
+        return self._search_dockets_postgres(
+        query, docket_type_param, agency, cfr_part_param,
+        start_date, end_date
+    )
 
     def _search_dockets_postgres(  # pylint: disable=too-many-locals
             self, query: str, docket_type_param: str = None,
             agency: List[str] = None,
-            cfr_part_param: List[str] = None) -> List[Dict[str, Any]]:
+            cfr_part_param: List[str] = None,
+            start_date: str = None,
+            end_date: str = None) -> List[Dict[str, Any]]:
         sql = """
             SELECT DISTINCT
                 d.docket_id,
@@ -68,6 +75,14 @@ class DBLayer:
             clauses = " OR ".join("cp.cfrPart ILIKE %s" for _ in cfr_part_param)
             sql += f" AND ({clauses})"
             params.extend(f"%{c}%" for c in cfr_part_param)
+            
+        if start_date:
+            sql += " AND d.modify_date::date >= %s::date"
+            params.append(start_date)
+
+        if end_date:
+            sql += " AND d.modify_date::date <= %s::date"
+            params.append(end_date)
 
         sql += " ORDER BY d.modify_date DESC, d.docket_id, cp.title, cp.cfrPart LIMIT 50"
 
