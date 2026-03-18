@@ -12,10 +12,10 @@ export async function searchDockets(query, docket_type = '', agency = [], cfr_pa
 		params.append("docket_type", docket_type)
 	}
 	if (yearFrom) {
-	    params.append("start_date", `${yearFrom}-01-01`)
+	    params.append("start_date", `${yearFrom}`)
 	}
 	if (yearTo)  {
-		 params.append("end_date", `${yearTo}-12-31`)
+		 params.append("end_date", `${yearTo}`)
 	}
 
 
