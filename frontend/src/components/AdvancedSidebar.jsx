@@ -11,6 +11,8 @@ function CollapsibleSection({ title, defaultOpen = true, children, right }) {
 
 
 
+
+
   return (
     <section className="section">
       <button
@@ -61,6 +63,8 @@ export default function AdvancedSidebar({
   const [cfrOrder, setCfrOrder] = useState(cfrParts);*/
   const [value, setOnchange] = useState([new Date(), new Date()]);
 
+
+
   const orderedAgencies = useMemo(() => {
     const order =
       agencyOrder.length > 0 ? agencyOrder : agenciesToShow.map((a) => a.code);
@@ -95,6 +99,15 @@ export default function AdvancedSidebar({
       return [code, ...base.filter((item) => item !== code)];
     });
   };
+
+
+const normalizeDate = (val, isEnd = false) => {
+  const yearOnly = /^\d{4}$/.test(val.trim());
+  if (yearOnly) {
+    return isEnd ? `${val.trim()}-12-31` : `${val.trim()}-01-01`;
+  }
+  return val;
+};
 
   /*const filteredCfrParts = useMemo(() => {
     const rawQuery = cfrSearch.trim().toLowerCase();
@@ -190,31 +203,45 @@ export default function AdvancedSidebar({
   </div>
 
   <div className="row">
-    <input
-      value={yearFrom}
-      onChange={(e) => {
-        const val = e.target.value;
-        setYearFrom(val);
+  <input
+  value={yearFrom}
+  onChange={(e) => {
+    const raw = e.target.value;
+    setYearFrom(raw);
 
-        if (yearTo) {
-          setOnchange([new Date(val), new Date(yearTo)]);
-        }
-      }}
-      placeholder="YYYY-MM-DD"
-    />
+    // Only normalize + sync calendar once it looks complete
+    const normalized = normalizeDate(raw, false);
+    const isYearOnly = /^\d{4}$/.test(raw.trim());
 
-    <input
-      value={yearTo}
-      onChange={(e) => {
-        const val = e.target.value;
-        setYearTo(val);
+    if (isYearOnly) {
+      const endNorm = `${raw.trim()}-12-31`;
+      setYearTo(endNorm);                          // auto-fill To
+      setOnchange([new Date(normalized), new Date(endNorm)]);
+    } else if (normalized && yearTo) {
+      setOnchange([new Date(normalized), new Date(yearTo)]);
+    }
+  }}
+  placeholder="YYYY or YYYY-MM-DD"
+/>
 
-        if (yearFrom) {
-          setOnchange([new Date(yearFrom), new Date(val)]);
-        }
-      }}
-      placeholder="YYYY-MM-DD"
-    />
+<input
+  value={yearTo}
+  onChange={(e) => {
+    const raw = e.target.value;
+    setYearTo(raw);
+
+    const normalized = normalizeDate(raw, true);
+    const isYearOnly = /^\d{4}$/.test(raw.trim());
+
+    if (isYearOnly) {
+      const startNorm = yearFrom || `${raw.trim()}-01-01`;
+      setOnchange([new Date(startNorm), new Date(normalized)]);
+    } else if (yearFrom && normalized) {
+      setOnchange([new Date(yearFrom), new Date(normalized)]);
+    }
+  }}
+  placeholder="YYYY or YYYY-MM-DD"
+/>
   </div>
 
   <div className="calendar-div">

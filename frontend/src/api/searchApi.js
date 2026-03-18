@@ -8,15 +8,21 @@ export async function searchDockets(query, docket_type = '', agency = [], cfr_pa
 	agency.forEach(a => params.append("agency", a))
 	cfr_part.forEach(p => params.append("cfr_part", p))
 
+	const normalizeDate = (val, isEnd = false) => {
+		if (/^\d{4}$/.test((val || '').trim())) {
+		  return isEnd ? `${val.trim()}-12-31` : `${val.trim()}-01-01`;
+		}
+		return val;
+	  };
+	
+	  const startDate = normalizeDate(yearFrom, false);
+	  const endDate   = normalizeDate(yearTo,   true);
+
 	if (docket_type) {
 		params.append("docket_type", docket_type)
 	}
-	if (yearFrom) {
-	    params.append("start_date", `${yearFrom}`)
-	}
-	if (yearTo)  {
-		 params.append("end_date", `${yearTo}`)
-	}
+	if (startDate)    params.append("start_date", startDate);
+	if (endDate)      params.append("end_date", endDate);
 
 
 	const response = await fetch(
