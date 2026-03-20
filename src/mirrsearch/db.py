@@ -45,12 +45,12 @@ class DBLayer:
                 d.docket_type,
                 d.modify_date,
                 cp.title,
-                cp.cfrPart,
+                cp.cfrpart,
                 l.link
             FROM dockets d
             JOIN documents doc ON doc.docket_id = d.docket_id
             LEFT JOIN cfrparts cp ON cp.document_id = doc.document_id
-            LEFT JOIN links l ON l.title = cp.title AND l.cfrPart = cp.cfrPart
+            LEFT JOIN links l ON l.title = cp.title AND l.cfrpart = cp.cfrpart
             WHERE d.docket_title ILIKE %s
         """
         params = [f"%{(query or '').strip().lower()}%"]
@@ -66,7 +66,7 @@ class DBLayer:
 
         if cfr_part_param:
             clauses = " OR ".join(
-                "(cp2.title ILIKE %s AND cp2.cfrPart ILIKE %s)"
+                "(cp2.title ILIKE %s AND cp2.cfrpart ILIKE %s)"
                 for _ in cfr_part_param
             )
             sql += f"""
@@ -82,7 +82,7 @@ class DBLayer:
                 params.append(f"%{c['title']}%")
                 params.append(f"%{c['part']}%")
 
-        sql += " ORDER BY d.modify_date DESC, d.docket_id, cp.title, cp.cfrPart LIMIT 50"
+        sql += " ORDER BY d.modify_date DESC, d.docket_id, cp.title, cp.cfrpart LIMIT 50"
 
         with self.conn.cursor() as cur:
             cur.execute(sql, params)

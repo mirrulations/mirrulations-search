@@ -118,7 +118,7 @@ def test_search_dockets_postgres_cfr_part_filter():
     db._search_dockets_postgres("", cfr_part_param=[{"title": "Title 42", "part": "413"}])
     sql, params = db.conn.cursor_obj.executed
     assert "cp2.title ILIKE %s" in sql
-    assert "cp2.cfrPart ILIKE %s" in sql
+    assert "cp2.cfrpart ILIKE %s" in sql
     assert "%Title 42%" in params
     assert "%413%" in params
 
@@ -131,7 +131,7 @@ def test_search_dockets_postgres_cfr_part_multi_filter():
         {"title": "Title 42", "part": "512"},
     ])
     sql, params = db.conn.cursor_obj.executed
-    assert sql.count("cp2.cfrPart ILIKE %s") == 2
+    assert sql.count("cp2.cfrpart ILIKE %s") == 2
     assert "%413%" in params
     assert "%512%" in params
 
