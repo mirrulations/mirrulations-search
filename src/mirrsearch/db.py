@@ -1,6 +1,6 @@
 import json
-from dataclasses import dataclass
-from typing import List, Dict, Any
+from dataclasses import dataclass, field
+from typing import List, Dict, Any, Optional
 import os
 import psycopg2
 from opensearchpy import OpenSearch
@@ -19,24 +19,23 @@ else:
 
 
 @dataclass(frozen=True)
+class SearchParams:
+    query: str = ""
+    docket_type: Optional[str] = None
+    agency: List[str] = field(default_factory=list)
+    cfr_part: List[Dict[str, str]] = field(default_factory=list)
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+
+
+@dataclass(frozen=True)
 class DBLayer:
     conn: Any = None
 
-    def search(
-            self,
-            query: str,
-            docket_type_param: str = None,
-            agency: List[str] = None,
-            cfr_part_param: List[str] = None,
-            start_date: str = None,
-            end_date: str = None) \
-            -> List[Dict[str, Any]]:
+    def search(self, params: SearchParams) -> List[Dict[str, Any]]:
         if self.conn is None:
             return []
-        return self._search_dockets(
-            query, docket_type_param, agency, cfr_part_param,
-            start_date, end_date
-        )
+        return self._search_dockets(params)
 
     def _get_cfr_docket_ids(self, cfr_part_param: List[Dict[str, str]]) -> set:
         clauses = " OR ".join(
@@ -101,19 +100,15 @@ class DBLayer:
         return title_ids | cfr_ids | doc_title_ids
 
     def _search_dockets(  # pylint: disable=too-many-locals
-            self, query: str, docket_type_param: str = None,
-            agency: List[str] = None,
-            cfr_part_param: List[str] = None,
-            start_date: str = None,
-            end_date: str = None) -> List[Dict[str, Any]]:
+            self, params: SearchParams) -> List[Dict[str, Any]]:
         """
         Return the list of all the unique dockets & the corresponding
         information needed for the frontend display by joining tables & pulling out the
         right fields for each docket.
         """
-        title_ids = self._search_dockets_by_title(query)
-        cfr_ids = self._search_dockets_by_cfr(cfr_part_param or [])
-        doc_title_ids = self._search_dockets_by_document_title(query)
+        title_ids = self._search_dockets_by_title(params.query)
+        cfr_ids = self._search_dockets_by_cfr(params.cfr_part or [])
+        doc_title_ids = self._search_dockets_by_document_title(params.query)
         docket_ids = self._join_results(title_ids, cfr_ids, doc_title_ids)
 
         if not docket_ids:
@@ -135,29 +130,29 @@ class DBLayer:
             LEFT JOIN links l ON l.title = cp.title AND l.cfrPart = cp.cfrPart
             WHERE d.docket_id = ANY(%s)
         """
-        params = [list(docket_ids)]
+        sql_params = [list(docket_ids)]
 
-        if docket_type_param:
+        if params.docket_type:
             sql += " AND d.docket_type = %s"
-            params.append(docket_type_param)
+            sql_params.append(params.docket_type)
 
-        if agency:
-            clauses = " OR ".join("d.agency_id ILIKE %s" for _ in agency)
+        if params.agency:
+            clauses = " OR ".join("d.agency_id ILIKE %s" for _ in params.agency)
             sql += f" AND ({clauses})"
-            params.extend(f"%{a}%" for a in agency)
+            sql_params.extend(f"%{a}%" for a in params.agency)
 
-        if start_date:
+        if params.start_date:
             sql += " AND d.modify_date::date >= %s::date"
-            params.append(start_date)
+            sql_params.append(params.start_date)
 
-        if end_date:
+        if params.end_date:
             sql += " AND d.modify_date::date <= %s::date"
-            params.append(end_date)
+            sql_params.append(params.end_date)
 
         sql += " ORDER BY d.modify_date DESC, d.docket_id, cp.title, cp.cfrPart LIMIT 50"
 
         with self.conn.cursor() as cur:
-            cur.execute(sql, params)
+            cur.execute(sql, sql_params)
             dockets = {}
             for row in cur.fetchall():
                 self._process_docket_row(dockets, row)
