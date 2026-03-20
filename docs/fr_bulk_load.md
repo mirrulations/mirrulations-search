@@ -1,29 +1,26 @@
-# Federal Register Bulk Load (FR-native Postgres schema)
+# Federal Register bulk load (FR-native schema)
 
-The bulk loader in `db/cfr_and_fr/load_fr_bulk.py` expects a large `documents.json` file that is **not** stored in this repo. You provide it locally (for example by unzipping the archive you download).
+Download the dataset: [`documents.json.zip`](https://drive.google.com/file/d/1htnOhjooaYgNRdobp1wj7et2e1UjlA7z/view?usp=sharing)
 
-## If setting up fresh
+1) Create the DB (empty + schema)
+```bash
+./db/create_empty_db.sh
+```
 
-1. Create an empty database + load the current schema:
-   ```bash
-   ./db/create_empty_db.sh
-   ```
+If the DB already exists:
+```bash
+psql -U <user> -d mirrulations -f db/migrations/001_fr_native_schema.sql
+```
 
-## If the DB is already running
+2) Unzip to get `documents.json`
+```bash
+unzip documents.json.zip -d /path/to/extracted
+```
 
-1. Re-apply the FR-native migration SQL to the existing `mirrulations` database:
-   ```bash
-   psql -U <user> -d mirrulations -f db/migrations/001_fr_native_schema.sql
-   ```
+3) Run the loader (points to your local `documents.json`)
+```bash
+.venv/bin/python db/cfr_and_fr/load_fr_bulk.py /path/to/extracted/documents.json
+```
 
-## Load `documents.json`
-
-1. Point the loader at your local copy of `documents.json`:
-   ```bash
-   bash.venv/bin/python db/cfr_and_fr/load_fr_bulk.py /path/to/their/documents.json
-   ```
-
-Notes:
-- The loader accepts the JSON file path as a CLI argument, so it works with zipped/external datasets as long as you extract `documents.json` somewhere locally.
-- `documents.json` can be very large; keep it outside the git repo.
+The loader expects `documents.json` to be a top-level JSON array. Items without `document_number` are skipped; items should include `docket_ids` and `cfr_references` to populate the CFR parts table.
 
