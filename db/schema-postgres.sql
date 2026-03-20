@@ -108,17 +108,47 @@ CREATE TABLE IF NOT EXISTS cfrparts (
 -- =========================================
 -- FEDERAL REGISTER DOCUMENTS TABLE
 -- =========================================
--- Stores federal register document information; references documents
--- frDocNum will be null at table creation & is retrieved from federal reserve & inserted into the table at the first query
+-- Stores FR-native document metadata keyed by Federal Register document number.
 
 CREATE TABLE IF NOT EXISTS federal_register_documents (
-    docket_id VARCHAR(50) NOT NULL,
-    document_id VARCHAR(50) NOT NULL REFERENCES documents(document_id),
-    agency_id VARCHAR(20) NOT NULL,
+    document_number VARCHAR(50) NOT NULL PRIMARY KEY,
+    document_id VARCHAR(50),
     document_title TEXT,
     document_type VARCHAR(50),
-    fr_doc_num VARCHAR(20),
-    cfr_title VARCHAR(10),
-    cfr_part VARCHAR(50),
-    PRIMARY KEY (document_id)
+    abstract TEXT,
+    publication_date DATE,
+    effective_on DATE,
+    docket_ids TEXT[],
+    agency_id VARCHAR(20),
+    agency_names TEXT[],
+    topics TEXT[],
+    significant BOOLEAN,
+    regulation_id_numbers TEXT[],
+    html_url VARCHAR(2000),
+    pdf_url VARCHAR(2000),
+    json_url VARCHAR(2000),
+    start_page INTEGER,
+    end_page INTEGER
 );
+
+CREATE INDEX IF NOT EXISTS idx_federal_register_documents_docket_ids
+    ON federal_register_documents USING GIN (docket_ids);
+
+CREATE INDEX IF NOT EXISTS idx_federal_register_documents_publication_date
+    ON federal_register_documents (publication_date);
+
+CREATE TABLE IF NOT EXISTS federal_register_cfr_parts (
+    document_number VARCHAR(50) NOT NULL
+        REFERENCES federal_register_documents(document_number) ON DELETE CASCADE,
+    docket_id TEXT NOT NULL,
+    cfr_title INTEGER NOT NULL,
+    cfr_part VARCHAR(50) NOT NULL,
+    citation_url VARCHAR(2000),
+    PRIMARY KEY (document_number, docket_id, cfr_title, cfr_part)
+);
+
+CREATE INDEX IF NOT EXISTS idx_federal_register_cfr_parts_docket_id
+    ON federal_register_cfr_parts (docket_id);
+
+CREATE INDEX IF NOT EXISTS idx_federal_register_cfr_parts_cfr
+    ON federal_register_cfr_parts (cfr_title, cfr_part);
