@@ -1,6 +1,6 @@
 import json
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 import os
 import psycopg2
 from opensearchpy import OpenSearch
@@ -99,8 +99,32 @@ class DBLayer:
         """
         return title_ids | cfr_ids | doc_title_ids
 
-    def _search_dockets(  # pylint: disable=too-many-locals
-            self, params: SearchParams) -> List[Dict[str, Any]]:
+    @staticmethod
+    def _build_sql_filters(params: SearchParams) -> Tuple[str, list]:
+        """Build optional WHERE filter clauses and their bound params."""
+        sql_filters = ""
+        filter_params: list = []
+
+        if params.docket_type:
+            sql_filters += " AND d.docket_type = %s"
+            filter_params.append(params.docket_type)
+
+        if params.agency:
+            clauses = " OR ".join("d.agency_id ILIKE %s" for _ in params.agency)
+            sql_filters += f" AND ({clauses})"
+            filter_params.extend(f"%{a}%" for a in params.agency)
+
+        if params.start_date:
+            sql_filters += " AND d.modify_date::date >= %s::date"
+            filter_params.append(params.start_date)
+
+        if params.end_date:
+            sql_filters += " AND d.modify_date::date <= %s::date"
+            filter_params.append(params.end_date)
+
+        return sql_filters, filter_params
+
+    def _search_dockets(self, params: SearchParams) -> List[Dict[str, Any]]:
         """
         Return the list of all the unique dockets & the corresponding
         information needed for the frontend display by joining tables & pulling out the
@@ -130,26 +154,10 @@ class DBLayer:
             LEFT JOIN links l ON l.title = cp.title AND l.cfrPart = cp.cfrPart
             WHERE d.docket_id = ANY(%s)
         """
-        sql_params = [list(docket_ids)]
-
-        if params.docket_type:
-            sql += " AND d.docket_type = %s"
-            sql_params.append(params.docket_type)
-
-        if params.agency:
-            clauses = " OR ".join("d.agency_id ILIKE %s" for _ in params.agency)
-            sql += f" AND ({clauses})"
-            sql_params.extend(f"%{a}%" for a in params.agency)
-
-        if params.start_date:
-            sql += " AND d.modify_date::date >= %s::date"
-            sql_params.append(params.start_date)
-
-        if params.end_date:
-            sql += " AND d.modify_date::date <= %s::date"
-            sql_params.append(params.end_date)
-
+        filter_sql, filter_params = self._build_sql_filters(params)
+        sql += filter_sql
         sql += " ORDER BY d.modify_date DESC, d.docket_id, cp.title, cp.cfrPart LIMIT 50"
+        sql_params = [list(docket_ids)] + filter_params
 
         with self.conn.cursor() as cur:
             cur.execute(sql, sql_params)
