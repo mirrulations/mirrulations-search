@@ -178,7 +178,8 @@ def test_search_with_nonexistent_agency_returns_empty_list(client):  # pylint: d
 
 def test_search_with_multiple_cfr_part_filters(client):  # pylint: disable=redefined-outer-name
     """Multiple cfr_part params return results matching any of them"""
-    response = client.get('/search/?str=renal&cfr_part=42&cfr_part=45')
+    response = client.get('/search/?str=renal&cfr_part=42 CFR Parts 413 and 512:413'
+                          '&cfr_part=42 CFR Parts 413 and 512:512')
     assert response.status_code == 200
     data = response.get_json()
     assert isinstance(data, list)

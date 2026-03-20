@@ -176,17 +176,20 @@ def test_search_agency_filter_no_match(db):
 
 def test_search_cfr_part_filter(db):
     """cfr_part_param filter works in dummy branch"""
-    result = db.search("", cfr_part_param=["42"])
+    result = db.search("", cfr_part_param=[{"title": "42 CFR Parts 413 and 512", "part": "413"}])
     assert len(result) == 2
 
 
 def test_search_cfr_part_filter_multiple(db):
     """Multiple cfr_part values return results matching any"""
-    result = db.search("", cfr_part_param=["42", "999"])
+    result = db.search("", cfr_part_param=[
+        {"title": "42 CFR Parts 413 and 512", "part": "413"},
+        {"title": "42 CFR Parts 413 and 512", "part": "512"},
+    ])
     assert len(result) == 2
 
 
 def test_search_cfr_part_filter_no_match(db):
     """cfr_part_param returns empty when no match"""
-    result = db.search("", cfr_part_param=["999"])
+    result = db.search("", cfr_part_param=[{"title": "Title 99", "part": "999"}])
     assert result == []

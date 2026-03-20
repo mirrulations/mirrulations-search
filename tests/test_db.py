@@ -112,23 +112,33 @@ def test_search_dockets_postgres_agency_and_docket_type_filter():
     assert params == ["%renal%", "Rulemaking", "%CMS%"]
 
 
-def test_search_dockets_postgres_cfr_part_filter():
-    """CFR part filter adds ILIKE clause"""
-    db = DBLayer(conn=_FakeConn([]))
-    db._search_dockets_postgres("", cfr_part_param=["42"])
+def test_get_cfr_docket_ids_single_part():
+    """Single CFR part queries federal_register_documents with title+part ILIKE clauses"""
+    db = DBLayer(conn=_FakeConn([("CMS-2025-0304",)]))
+    result = db._get_cfr_docket_ids([{"title": "Title 42", "part": "413"}])
     sql, params = db.conn.cursor_obj.executed
-    assert "cp.cfrPart ILIKE %s" in sql
-    assert params == ["%%", "%42%"]
+    assert "federal_register_documents" in sql
+    assert "cfr_title ILIKE %s" in sql
+    assert "cfr_part ILIKE %s" in sql
+    assert "%Title 42%" in params
+    assert "%413%" in params
+    assert result == {"CMS-2025-0304"}
 
 
-def test_search_dockets_postgres_cfr_part_multi_filter():
-    """Multiple CFR parts produce OR'd ILIKE clauses"""
-    db = DBLayer(conn=_FakeConn([]))
-    db._search_dockets_postgres("", cfr_part_param=["42", "45"])
+def test_get_cfr_docket_ids_multi_part():
+    """Multiple CFR parts produce OR'd title+part ILIKE clauses
+    against federal_register_documents"""
+    db = DBLayer(conn=_FakeConn([("CMS-2025-0304",), ("CMS-2025-0240",)]))
+    result = db._get_cfr_docket_ids([
+        {"title": "Title 42", "part": "413"},
+        {"title": "Title 42", "part": "512"},
+    ])
     sql, params = db.conn.cursor_obj.executed
-    assert sql.count("cp.cfrPart ILIKE %s") == 2
-    assert "%42%" in params
-    assert "%45%" in params
+    assert "federal_register_documents" in sql
+    assert sql.count("cfr_part ILIKE %s") == 2
+    assert "%413%" in params
+    assert "%512%" in params
+    assert result == {"CMS-2025-0304", "CMS-2025-0240"}
 
 
 def test_search_dockets_postgres_no_filter_no_extra_clauses():
@@ -265,6 +275,187 @@ def test_search_dockets_postgres_empty_query_uses_wildcard():
     db._search_dockets_postgres("")
     _, params = db.conn.cursor_obj.executed
     assert params == ["%%"]
+
+
+# --- _search_dockets_by_title tests ---
+
+def test_search_dockets_by_title_returns_matching_ids():
+    """Returns a set of docket_ids whose titles match the query"""
+    rows = [("DOC-001",), ("DOC-002",)]
+    db = DBLayer(conn=_FakeConn(rows))
+    result = db._search_dockets_by_title("clean air")
+    assert result == {"DOC-001", "DOC-002"}
+
+
+def test_search_dockets_by_title_no_matches_returns_empty_set():
+    """Returns an empty set when no titles match"""
+    db = DBLayer(conn=_FakeConn([]))
+    result = db._search_dockets_by_title("nonexistent")
+    assert result == set()
+
+
+def test_search_dockets_by_title_query_wrapped_with_wildcards():
+    """Query is wrapped with %...% wildcards in the SQL params"""
+    db = DBLayer(conn=_FakeConn([]))
+    db._search_dockets_by_title("water")
+    sql, params = db.conn.cursor_obj.executed
+    assert "dockets" in sql
+    assert "docket_title ILIKE %s" in sql
+    assert params == ["%water%"]
+
+
+# --- _search_dockets_by_cfr tests ---
+
+def test_search_dockets_by_cfr_returns_matching_ids():
+    """Returns a set of docket_ids from federal_register_documents matching cfr params"""
+    rows = [("DOC-001",), ("DOC-002",)]
+    db = DBLayer(conn=_FakeConn(rows))
+    result = db._search_dockets_by_cfr([{"title": "Title 42", "part": "413"}])
+    assert result == {"DOC-001", "DOC-002"}
+
+
+def test_search_dockets_by_cfr_empty_param_returns_empty_set():
+    """Returns an empty set without querying when cfr_part_param is empty"""
+    db = DBLayer(conn=_FakeConn([]))
+    result = db._search_dockets_by_cfr([])
+    assert result == set()
+
+
+def test_search_dockets_by_cfr_deduplicates_docket_ids():
+    """Multiple CFR parts matching the same docket produce only one entry in the set"""
+    rows = [("DOC-001",), ("DOC-001",), ("DOC-001",)]
+    db = DBLayer(conn=_FakeConn(rows))
+    result = db._search_dockets_by_cfr([{"title": "Title 42", "part": "413"}])
+    assert result == {"DOC-001"}
+    assert len(result) == 1
+
+
+def test_search_dockets_by_cfr_queries_federal_register_documents():
+    """SQL targets federal_register_documents with cfr_title and cfr_part ILIKE clauses"""
+    db = DBLayer(conn=_FakeConn([]))
+    db._search_dockets_by_cfr([{"title": "Title 42", "part": "413"}])
+    sql, params = db.conn.cursor_obj.executed
+    assert "federal_register_documents" in sql
+    assert "cfr_title ILIKE %s" in sql
+    assert "cfr_part ILIKE %s" in sql
+    assert "%Title 42%" in params
+    assert "%413%" in params
+
+
+# --- _search_dockets_by_document_title tests ---
+
+def test_search_dockets_by_document_title_returns_matching_ids():
+    """Returns a set of docket_ids whose documents match the query"""
+    rows = [("DOC-001",), ("DOC-002",)]
+    db = DBLayer(conn=_FakeConn(rows))
+    result = db._search_dockets_by_document_title("clean air")
+    assert result == {"DOC-001", "DOC-002"}
+
+
+def test_search_dockets_by_document_title_no_matches_returns_empty_set():
+    """Returns an empty set when no document titles match"""
+    db = DBLayer(conn=_FakeConn([]))
+    result = db._search_dockets_by_document_title("nonexistent")
+    assert result == set()
+
+
+def test_search_dockets_by_document_title_deduplicates_docket_ids():
+    """Multiple document title matches under the same docket produce only one id in the set"""
+    rows = [("DOC-001",), ("DOC-001",), ("DOC-001",)]
+    db = DBLayer(conn=_FakeConn(rows))
+    result = db._search_dockets_by_document_title("water")
+    assert result == {"DOC-001"}
+    assert len(result) == 1
+
+
+def test_search_dockets_by_document_title_queries_documents_table():
+    """SQL targets documents table with document_title ILIKE and wildcard-wrapped query"""
+    db = DBLayer(conn=_FakeConn([]))
+    db._search_dockets_by_document_title("water quality")
+    sql, params = db.conn.cursor_obj.executed
+    assert "documents" in sql
+    assert "document_title ILIKE %s" in sql
+    assert params == ["%water quality%"]
+
+
+# --- _join_results tests ---
+
+def test_join_results_combines_all_three_sets():
+    """Union of three disjoint sets contains all docket ids"""
+    db = DBLayer()
+    result = db._join_results({"DOC-001"}, {"DOC-002"}, {"DOC-003"})
+    assert result == {"DOC-001", "DOC-002", "DOC-003"}
+
+
+def test_join_results_deduplicates_across_sets():
+    """Docket ids appearing in multiple sets are only included once"""
+    db = DBLayer()
+    result = db._join_results({"DOC-001", "DOC-002"}, {"DOC-002", "DOC-003"},
+                              {"DOC-001", "DOC-003"})
+    assert result == {"DOC-001", "DOC-002", "DOC-003"}
+    assert len(result) == 3
+
+
+def test_join_results_with_empty_sets():
+    """Empty sets are handled gracefully, returning only ids from non-empty sets"""
+    db = DBLayer()
+    result = db._join_results({"DOC-001"}, set(), set())
+    assert result == {"DOC-001"}
+
+
+def test_join_results_all_empty_returns_empty_set():
+    """All empty sets returns an empty set"""
+    db = DBLayer()
+    result = db._join_results(set(), set(), set())
+    assert result == set()
+
+
+# --- _search_dockets tests ---
+
+def test_search_dockets_returns_empty_when_no_ids_found(monkeypatch):
+    """Returns [] immediately when all three helpers return empty sets"""
+    db = DBLayer(conn=_FakeConn([]))
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_title", lambda self, q: set())
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_cfr", lambda self, c: set())
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_document_title", lambda self, q: set())
+    assert db._search_dockets("anything") == []
+
+
+def test_search_dockets_returns_docket_details_for_matched_ids(monkeypatch):
+    """Returns processed docket details for ids returned by the helpers"""
+    rows = [("DOC-001", "Test Docket", "CMS", "Rulemaking", "2024-01-01", None, None, None)]
+    db = DBLayer(conn=_FakeConn(rows))
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_title", lambda self, q: {"DOC-001"})
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_cfr", lambda self, c: set())
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_document_title", lambda self, q: set())
+    results = db._search_dockets("test")
+    assert len(results) == 1
+    assert results[0]["docket_id"] == "DOC-001"
+    assert results[0]["docket_title"] == "Test Docket"
+
+
+def test_search_dockets_applies_docket_type_filter(monkeypatch):
+    """docket_type_param is added as a filter clause in the details query"""
+    db = DBLayer(conn=_FakeConn([]))
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_title", lambda self, q: {"DOC-001"})
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_cfr", lambda self, c: set())
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_document_title", lambda self, q: set())
+    db._search_dockets("test", docket_type_param="Rulemaking")
+    sql, params = db.conn.cursor_obj.executed
+    assert "d.docket_type = %s" in sql
+    assert "Rulemaking" in params
+
+
+def test_search_dockets_applies_agency_filter(monkeypatch):
+    """agency filter is added as an ILIKE clause in the details query"""
+    db = DBLayer(conn=_FakeConn([]))
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_title", lambda self, q: {"DOC-001"})
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_cfr", lambda self, c: set())
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_document_title", lambda self, q: set())
+    db._search_dockets("test", agency=["CMS"])
+    sql, params = db.conn.cursor_obj.executed
+    assert "agency_id ILIKE %s" in sql
+    assert "%CMS%" in params
 
 
 # --- Factory function tests ---

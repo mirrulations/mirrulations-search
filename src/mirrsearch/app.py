@@ -6,11 +6,20 @@ from mirrsearch.internal_logic import InternalLogic
 
 def _get_search_params():
     """Extract and validate search parameters from the request."""
+    cfr_parts_raw = [v for v in request.args.getlist('cfr_part') if v]
+    cfr_parts_parsed = None
+
+    if cfr_parts_raw:
+        cfr_parts_parsed = []
+        for cfr_str in cfr_parts_raw:
+            title, part = cfr_str.split(':', 1)
+            cfr_parts_parsed.append({'title': title, 'part': part})
+
     return {
         'search_input': request.args.get('str') or 'example_query',
         'docket_type': request.args.get('docket_type'),
         'agency': [v for v in request.args.getlist('agency') if v] or None,
-        'cfr_part': [v for v in request.args.getlist('cfr_part') if v] or None,
+        'cfr_part': cfr_parts_parsed,
         'start_date': request.args.get('start_date') or None,
         'end_date': request.args.get('end_date') or None,
     }

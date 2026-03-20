@@ -6,7 +6,12 @@ export async function searchDockets(query, docket_type = '', agency = [], cfr_pa
 	params.append("page", page)
 
 	agency.forEach(a => params.append("agency", a))
-	cfr_part.forEach(p => params.append("cfr_part", p))
+
+	// Append CFR parts
+  	// Each CFR part becomes something like: title:part
+  	cfr_part.forEach(({ title, part }) => {
+    	params.append("cfr_part", `${title}:${part}`)
+  	})
 
 	if (docket_type) {
 		params.append("docket_type", docket_type)

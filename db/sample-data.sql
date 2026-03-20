@@ -1211,3 +1211,128 @@ INSERT INTO cfrParts(
     42,
     '512'
 );
+
+-- =========================================
+-- FEDERAL REGISTER DOCUMENTS
+-- =========================================
+-- Made up for now until we have actual data
+
+INSERT INTO federal_register_documents (
+    docket_id,
+    document_id,
+    agency_id,
+    document_title,
+    document_type,
+    fr_doc_num,
+    cfr_title,
+    cfr_part
+) VALUES (
+    'CMS-2025-0304',
+    'CMS-2025-0304-0001',
+    'CMS',
+    'Medicare and Medicaid Programs; CY 2026 Payment Policies under the Physician Fee Schedule and Other Changes to Part B Payment and Coverage Policies (CMS-1832-P)',
+    'Proposed Rule',
+    NULL,
+    '42',
+    '405'
+);
+
+INSERT INTO federal_register_documents (
+    docket_id,
+    document_id,
+    agency_id,
+    document_title,
+    document_type,
+    fr_doc_num,
+    cfr_title,
+    cfr_part
+) VALUES (
+    'CMS-2025-0304',
+    'CMS-2025-0304-0009',
+    'CMS',
+    'Medicare and Medicaid Programs: Calendar Year 2026 Payment Policies under the Physician Fee Schedule and Other Changes to Part B Payment and Coverage Policies; Medicare Shared Savings Program Requirements; and Medicare Prescription Drug Inflation Rebate Program',
+    'Proposed Rule',
+    '2025-13271',
+    '42',
+    '405'
+);
+
+INSERT INTO federal_register_documents (
+    docket_id,
+    document_id,
+    agency_id,
+    document_title,
+    document_type,
+    fr_doc_num,
+    cfr_title,
+    cfr_part
+) VALUES (
+    'CMS-2025-0304',
+    'CMS-2025-0304-1544',
+    'CMS',
+    'Medicare and Medicaid Programs: Calendar Year 2026 Payment Policies under the Physician Fee Schedule and Other Changes to Part B Payment and Coverage Policies; Medicare Shared Savings Program Requirements; and Medicare Prescription Drug Inflation Rebate Program; Correction',
+    'Proposed Rule',
+    '2025-15492',
+    '42',
+    '405'
+);
+
+INSERT INTO federal_register_documents (
+    docket_id,
+    document_id,
+    agency_id,
+    document_title,
+    document_type,
+    fr_doc_num,
+    cfr_title,
+    cfr_part
+) VALUES (
+    'CMS-2025-0304',
+    'CMS-2025-0304-14108',
+    'CMS',
+    'Medicare and Medicaid Programs: Calendar Year 2026 Payment Policies under the Physician Fee Schedule and Other Changes to Part B Payment and Coverage Policies; Medicare Shared Savings Program Requirements; and Medicare Prescription Drug Inflation Rebate Program',
+    'Rule',
+    '2025-19787',
+    '42',
+    '405'
+);
+
+INSERT INTO federal_register_documents (
+    docket_id,
+    document_id,
+    agency_id,
+    document_title,
+    document_type,
+    fr_doc_num,
+    cfr_title,
+    cfr_part
+) VALUES (
+    'CMS-2025-0304',
+    'CMS-2025-0304-14109',
+    'CMS',
+    'Medicare and Medicaid Programs: Calendar Year 2026 Payment Policies Under the Physician Fee Schedule and Other Changes to Part B Payment and Coverage Policies; Medicare Shared Savings Program Requirements; and Medicare Prescription Drug Inflation Rebate Program; Correction',
+    'Rule',
+    '2025-21458',
+    '42',
+    '405'
+);
+
+INSERT INTO federal_register_documents (
+    docket_id,
+    document_id,
+    agency_id,
+    document_title,
+    document_type,
+    fr_doc_num,
+    cfr_title,
+    cfr_part
+) VALUES (
+    'CMS-2025-0240',
+    'CMS-2025-0240-0001',
+    'CMS',
+    'CY 2026 Changes to the End-Stage Renal Disease (ESRD) Prospective Payment System and Quality Incentive Program. CMS1830-P Display',
+    'Proposed Rule',
+    '2025-20681',
+    '42',
+    '413'
+);

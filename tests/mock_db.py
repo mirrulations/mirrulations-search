@@ -68,6 +68,10 @@ class MockDBLayer:  # pylint: disable=too-few-public-methods
         if cfr_part_param:
             results = [
                 item for item in results
-                if any(c.lower() in item["cfrPart"].lower() for c in cfr_part_param)
+                if any(
+                    c['title'].lower() in item["cfrPart"].lower()
+                    and c['part'].lower() in item["cfrPart"].lower()
+                    for c in cfr_part_param
+                )
             ]
         return results
