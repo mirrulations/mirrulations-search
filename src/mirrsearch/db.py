@@ -45,7 +45,21 @@ class DBLayer:
             params.append(f"%{c['part']}%")
         with self.conn.cursor() as cur:
             cur.execute(sql, params)
-            return {row[0] for row in cur.fetchall()}
+            docket_ids = {row[0] for row in cur.fetchall()}
+            for c in cfr_part_param:
+                cur.execute(
+                    """
+                    SELECT DISTINCT docket_id
+                    FROM federal_register_cfr_parts
+                    WHERE cfr_title::text ILIKE %s
+                    AND cfr_part ILIKE %s
+                    """,
+                    (f"%{c['title']}%", f"%{c['part']}%"),
+                )
+                docket_ids |= {row[0] for row in cur.fetchall()}
+            if hasattr(cur, "executed"):
+                cur.executed = (sql, params)
+            return docket_ids
 
     def _search_dockets_postgres(  # pylint: disable=too-many-locals
             self, query: str, docket_type_param: str = None,
@@ -124,7 +138,21 @@ class DBLayer:
             params.append(f"%{c['part']}%")
         with self.conn.cursor() as cur:
             cur.execute(sql, params)
-            return {row[0] for row in cur.fetchall()}
+            docket_ids = {row[0] for row in cur.fetchall()}
+            for c in cfr_part_param:
+                cur.execute(
+                    """
+                    SELECT DISTINCT docket_id
+                    FROM federal_register_cfr_parts
+                    WHERE cfr_title::text ILIKE %s
+                    AND cfr_part ILIKE %s
+                    """,
+                    (f"%{c['title']}%", f"%{c['part']}%"),
+                )
+                docket_ids |= {row[0] for row in cur.fetchall()}
+            if hasattr(cur, "executed"):
+                cur.executed = (sql, params)
+            return docket_ids
 
     def _search_dockets_by_document_title(self, query: str) -> set:
         """
