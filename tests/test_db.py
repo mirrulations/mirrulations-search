@@ -7,7 +7,7 @@ factory functions. Dummy-data behavior tests live in test_mock.py.
 # pylint: disable=redefined-outer-name,protected-access
 import pytest
 import mirrsearch.db as db_module
-from mirrsearch.db import DBLayer, get_db
+from mirrsearch.db import DBLayer, SearchParams, get_db
 
 
 # --- DBLayer instantiation ---
@@ -29,7 +29,7 @@ def test_db_layer_is_frozen():
 def test_db_layer_no_conn_returns_empty():
     """DBLayer with no connection returns empty list from search"""
     db = DBLayer()
-    assert db.search("anything") == []
+    assert db.search(SearchParams(query="anything")) == []
 
 
 def test_get_db_returns_dblayer():
@@ -72,44 +72,57 @@ class _FakeConn:
         return None
 
 
-# --- _search_dockets_postgres filter tests ---
+# --- _search_dockets filter tests ---
 
-def test_search_dockets_postgres_agency_filter():
+def test_search_dockets_agency_filter(monkeypatch):
     """Agency filter adds ILIKE clause and wraps value with wildcards"""
     db = DBLayer(conn=_FakeConn([]))
-    db._search_dockets_postgres("", agency=["CMS"])
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_title", lambda self, q: {"DOC-001"})
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_cfr", lambda self, c: set())
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_document_title", lambda self, q: set())
+    db._search_dockets(SearchParams(query="", agency=["CMS"]))
     sql, params = db.conn.cursor_obj.executed
     assert "agency_id ILIKE %s" in sql
-    assert params == ["%%", "%CMS%"]
+    assert "%CMS%" in params
 
 
-def test_search_dockets_postgres_agency_multi_filter():
+def test_search_dockets_agency_multi_filter(monkeypatch):
     """Multiple agencies produce OR'd ILIKE clauses"""
     db = DBLayer(conn=_FakeConn([]))
-    db._search_dockets_postgres("", agency=["CMS", "EPA"])
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_title", lambda self, q: {"DOC-001"})
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_cfr", lambda self, c: set())
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_document_title", lambda self, q: set())
+    db._search_dockets(SearchParams(query="", agency=["CMS", "EPA"]))
     sql, params = db.conn.cursor_obj.executed
     assert sql.count("agency_id ILIKE %s") == 2
     assert "%CMS%" in params
     assert "%EPA%" in params
 
 
-def test_search_dockets_postgres_docket_type_filter():
+def test_search_dockets_docket_type_filter(monkeypatch):
     """Docket type filter adds exact match clause"""
     db = DBLayer(conn=_FakeConn([]))
-    db._search_dockets_postgres("", docket_type_param="Rulemaking")
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_title", lambda self, q: {"DOC-001"})
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_cfr", lambda self, c: set())
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_document_title", lambda self, q: set())
+    db._search_dockets(SearchParams(query="", docket_type="Rulemaking"))
     sql, params = db.conn.cursor_obj.executed
     assert "d.docket_type = %s" in sql
-    assert params == ["%%", "Rulemaking"]
+    assert "Rulemaking" in params
 
 
-def test_search_dockets_postgres_agency_and_docket_type_filter():
+def test_search_dockets_agency_and_docket_type_filter(monkeypatch):
     """Both filters add their clauses and params in order"""
     db = DBLayer(conn=_FakeConn([]))
-    db._search_dockets_postgres("renal", docket_type_param="Rulemaking", agency=["CMS"])
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_title", lambda self, q: {"DOC-001"})
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_cfr", lambda self, c: set())
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_document_title", lambda self, q: set())
+    db._search_dockets(SearchParams(query="renal", docket_type="Rulemaking", agency=["CMS"]))
     sql, params = db.conn.cursor_obj.executed
     assert "d.docket_type = %s" in sql
     assert "agency_id ILIKE %s" in sql
-    assert params == ["%renal%", "Rulemaking", "%CMS%"]
+    assert "Rulemaking" in params
+    assert "%CMS%" in params
 
 
 def test_get_cfr_docket_ids_single_part():
@@ -141,32 +154,40 @@ def test_get_cfr_docket_ids_multi_part():
     assert result == {"CMS-2025-0304", "CMS-2025-0240"}
 
 
-def test_search_dockets_postgres_no_filter_no_extra_clauses():
-    """Without filters, SQL has no extra AND clauses beyond docket_title"""
+def test_search_dockets_no_filter_no_extra_clauses(monkeypatch):
+    """Without filters, SQL has no extra AND clauses beyond docket_id"""
     db = DBLayer(conn=_FakeConn([]))
-    db._search_dockets_postgres("abc")
-    sql, params = db.conn.cursor_obj.executed
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_title", lambda self, q: {"DOC-001"})
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_cfr", lambda self, c: set())
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_document_title", lambda self, q: set())
+    db._search_dockets(SearchParams(query="abc"))
+    sql, _ = db.conn.cursor_obj.executed
     assert "d.docket_type = %s" not in sql
     assert "agency_id ILIKE %s" not in sql
-    assert params == ["%abc%"]
 
 
-# --- _search_dockets_postgres tests ---
+# --- _search_dockets result-building tests ---
 
-def test_search_dockets_postgres_empty_results():
+def test_search_dockets_empty_results(monkeypatch):
     """No rows returns an empty list"""
     db = DBLayer(conn=_FakeConn([]))
-    results = db._search_dockets_postgres("anything")
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_title", lambda self, q: {"DOC-001"})
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_cfr", lambda self, c: set())
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_document_title", lambda self, q: set())
+    results = db._search_dockets(SearchParams(query="anything"))
     assert results == []
 
 
-def test_search_dockets_postgres_single_docket_single_cfr():
+def test_search_dockets_single_docket_single_cfr(monkeypatch):
     """Single row returns one docket with one cfr_ref"""
     rows = [("DOC-001", "Test Docket", "CMS", "Rulemaking",
              "2024-01-01", "Title 42", "42", "http://link")]
     db = DBLayer(conn=_FakeConn(rows))
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_title", lambda self, q: {"DOC-001"})
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_cfr", lambda self, c: set())
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_document_title", lambda self, q: set())
 
-    results = db._search_dockets_postgres("test")
+    results = db._search_dockets(SearchParams(query="test"))
 
     assert len(results) == 1
     assert results[0]["docket_id"] == "DOC-001"
@@ -179,7 +200,7 @@ def test_search_dockets_postgres_single_docket_single_cfr():
     assert results[0]["cfr_refs"][0]["cfrParts"] == {"42": "http://link"}
 
 
-def test_search_dockets_postgres_multiple_cfr_parts_same_title():
+def test_search_dockets_multiple_cfr_parts_same_title(monkeypatch):
     """Multiple rows for same docket+title aggregate cfrParts without duplicates"""
     rows = [
         ("DOC-001", "Test Docket", "CMS", "Rulemaking",
@@ -188,8 +209,11 @@ def test_search_dockets_postgres_multiple_cfr_parts_same_title():
          "2024-01-01", "Title 42", "43", "http://link"),
     ]
     db = DBLayer(conn=_FakeConn(rows))
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_title", lambda self, q: {"DOC-001"})
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_cfr", lambda self, c: set())
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_document_title", lambda self, q: set())
 
-    results = db._search_dockets_postgres("test")
+    results = db._search_dockets(SearchParams(query="test"))
 
     assert len(results) == 1
     cfr_ref = results[0]["cfr_refs"][0]
@@ -199,7 +223,7 @@ def test_search_dockets_postgres_multiple_cfr_parts_same_title():
     assert len(cfr_ref["cfrParts"]) == 2
 
 
-def test_search_dockets_postgres_multiple_titles_same_docket():
+def test_search_dockets_multiple_titles_same_docket(monkeypatch):
     """Multiple cfr titles for the same docket produce multiple cfr_refs"""
     rows = [
         ("DOC-001", "Test Docket", "CMS", "Rulemaking",
@@ -208,15 +232,18 @@ def test_search_dockets_postgres_multiple_titles_same_docket():
          "2024-01-01", "Title 45", "45", "http://link45"),
     ]
     db = DBLayer(conn=_FakeConn(rows))
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_title", lambda self, q: {"DOC-001"})
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_cfr", lambda self, c: set())
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_document_title", lambda self, q: set())
 
-    results = db._search_dockets_postgres("test")
+    results = db._search_dockets(SearchParams(query="test"))
 
     assert len(results) == 1
     titles = {ref["title"] for ref in results[0]["cfr_refs"]}
     assert titles == {"Title 42", "Title 45"}
 
 
-def test_search_dockets_postgres_multiple_dockets():
+def test_search_dockets_multiple_dockets(monkeypatch):
     """Rows for different dockets produce separate docket entries"""
     rows = [
         ("DOC-001", "First Docket", "CMS", "Rulemaking",
@@ -225,28 +252,35 @@ def test_search_dockets_postgres_multiple_dockets():
          "2024-02-01", "Title 40", "40", "http://b"),
     ]
     db = DBLayer(conn=_FakeConn(rows))
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_title",
+                        lambda self, q: {"DOC-001", "DOC-002"})
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_cfr", lambda self, c: set())
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_document_title", lambda self, q: set())
 
-    results = db._search_dockets_postgres("docket")
+    results = db._search_dockets(SearchParams(query="docket"))
 
     assert len(results) == 2
     ids = {r["docket_id"] for r in results}
     assert ids == {"DOC-001", "DOC-002"}
 
 
-def test_search_dockets_postgres_none_cfr_fields_ignored():
+def test_search_dockets_none_cfr_fields_ignored(monkeypatch):
     """Rows with None title or None cfrPart do not add entries to cfr_refs"""
     rows = [
         ("DOC-001", "Test Docket", "CMS", "Rulemaking", "2024-01-01", None, None, None),
     ]
     db = DBLayer(conn=_FakeConn(rows))
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_title", lambda self, q: {"DOC-001"})
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_cfr", lambda self, c: set())
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_document_title", lambda self, q: set())
 
-    results = db._search_dockets_postgres("test")
+    results = db._search_dockets(SearchParams(query="test"))
 
     assert len(results) == 1
     assert results[0]["cfr_refs"] == []
 
 
-def test_search_dockets_postgres_duplicate_cfr_part_not_repeated():
+def test_search_dockets_duplicate_cfr_part_not_repeated(monkeypatch):
     """Same cfrPart appearing in multiple rows is only stored once"""
     rows = [
         ("DOC-001", "Test Docket", "CMS", "Rulemaking",
@@ -255,26 +289,13 @@ def test_search_dockets_postgres_duplicate_cfr_part_not_repeated():
          "2024-01-01", "Title 42", "42", "http://link"),
     ]
     db = DBLayer(conn=_FakeConn(rows))
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_title", lambda self, q: {"DOC-001"})
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_cfr", lambda self, c: set())
+    monkeypatch.setattr(DBLayer, "_search_dockets_by_document_title", lambda self, q: set())
 
-    results = db._search_dockets_postgres("test")
+    results = db._search_dockets(SearchParams(query="test"))
 
     assert results[0]["cfr_refs"][0]["cfrParts"] == {"42": "http://link"}
-
-
-def test_search_dockets_postgres_query_param_formatting():
-    """Query string is wrapped with %...% wildcards in params"""
-    db = DBLayer(conn=_FakeConn([]))
-    db._search_dockets_postgres("clean air")
-    _, params = db.conn.cursor_obj.executed
-    assert params == ["%clean air%"]
-
-
-def test_search_dockets_postgres_empty_query_uses_wildcard():
-    """Empty query string results in a %% wildcard param"""
-    db = DBLayer(conn=_FakeConn([]))
-    db._search_dockets_postgres("")
-    _, params = db.conn.cursor_obj.executed
-    assert params == ["%%"]
 
 
 # --- _search_dockets_by_title tests ---
@@ -410,7 +431,7 @@ def test_join_results_all_empty_returns_empty_set():
     assert result == set()
 
 
-# --- _search_dockets tests ---
+# --- _search_dockets higher-level tests ---
 
 def test_search_dockets_returns_empty_when_no_ids_found(monkeypatch):
     """Returns [] immediately when all three helpers return empty sets"""
@@ -418,7 +439,7 @@ def test_search_dockets_returns_empty_when_no_ids_found(monkeypatch):
     monkeypatch.setattr(DBLayer, "_search_dockets_by_title", lambda self, q: set())
     monkeypatch.setattr(DBLayer, "_search_dockets_by_cfr", lambda self, c: set())
     monkeypatch.setattr(DBLayer, "_search_dockets_by_document_title", lambda self, q: set())
-    assert db._search_dockets("anything") == []
+    assert db._search_dockets(SearchParams(query="anything")) == []
 
 
 def test_search_dockets_returns_docket_details_for_matched_ids(monkeypatch):
@@ -428,19 +449,19 @@ def test_search_dockets_returns_docket_details_for_matched_ids(monkeypatch):
     monkeypatch.setattr(DBLayer, "_search_dockets_by_title", lambda self, q: {"DOC-001"})
     monkeypatch.setattr(DBLayer, "_search_dockets_by_cfr", lambda self, c: set())
     monkeypatch.setattr(DBLayer, "_search_dockets_by_document_title", lambda self, q: set())
-    results = db._search_dockets("test")
+    results = db._search_dockets(SearchParams(query="test"))
     assert len(results) == 1
     assert results[0]["docket_id"] == "DOC-001"
     assert results[0]["docket_title"] == "Test Docket"
 
 
 def test_search_dockets_applies_docket_type_filter(monkeypatch):
-    """docket_type_param is added as a filter clause in the details query"""
+    """docket_type param is added as a filter clause in the details query"""
     db = DBLayer(conn=_FakeConn([]))
     monkeypatch.setattr(DBLayer, "_search_dockets_by_title", lambda self, q: {"DOC-001"})
     monkeypatch.setattr(DBLayer, "_search_dockets_by_cfr", lambda self, c: set())
     monkeypatch.setattr(DBLayer, "_search_dockets_by_document_title", lambda self, q: set())
-    db._search_dockets("test", docket_type_param="Rulemaking")
+    db._search_dockets(SearchParams(query="test", docket_type="Rulemaking"))
     sql, params = db.conn.cursor_obj.executed
     assert "d.docket_type = %s" in sql
     assert "Rulemaking" in params
@@ -452,7 +473,7 @@ def test_search_dockets_applies_agency_filter(monkeypatch):
     monkeypatch.setattr(DBLayer, "_search_dockets_by_title", lambda self, q: {"DOC-001"})
     monkeypatch.setattr(DBLayer, "_search_dockets_by_cfr", lambda self, c: set())
     monkeypatch.setattr(DBLayer, "_search_dockets_by_document_title", lambda self, q: set())
-    db._search_dockets("test", agency=["CMS"])
+    db._search_dockets(SearchParams(query="test", agency=["CMS"]))
     sql, params = db.conn.cursor_obj.executed
     assert "agency_id ILIKE %s" in sql
     assert "%CMS%" in params
