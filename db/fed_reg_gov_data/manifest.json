@@ -1,0 +1,49 @@
+{
+  "dataset_name": "fr_high_match_docket_rin",
+  "schema_version": 1,
+  "generated_at_utc": "2026-03-23T17:25:42.489566+00:00",
+  "duration_seconds": 3.969,
+  "filters": {
+    "requires_regulation_id_numbers": true,
+    "requires_docket_ids": true,
+    "quality_tier": "clean_only",
+    "canonical_clean_pattern": "^[A-Z]{2,10}-[0-9]{4}-[A-Z0-9-]{3,}$",
+    "year_from": null,
+    "year_to": null,
+    "agencies": []
+  },
+  "field_mode": "full",
+  "columns": [
+    "document_number",
+    "document_id",
+    "document_title",
+    "document_type",
+    "abstract",
+    "publication_date",
+    "effective_on",
+    "docket_ids",
+    "agency_id",
+    "agency_names",
+    "topics",
+    "significant",
+    "regulation_id_numbers",
+    "html_url",
+    "pdf_url",
+    "json_url",
+    "start_page",
+    "end_page"
+  ],
+  "row_count": 4286,
+  "source_rows_scanned": 92378,
+  "rejected_no_eligible_canonical_docket": 88092,
+  "partition_count": 32,
+  "compressed_bytes_total": 1373103,
+  "partitioning": "agency_id",
+  "output_format": "jsonl.gz",
+  "artifacts": {
+    "manifest": "manifest.json",
+    "partitions_csv": "partitions.csv",
+    "partition_root": "hq_clean/by_agency"
+  },
+  "federal_only_no_synthesis": true
+}
