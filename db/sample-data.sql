@@ -2044,6 +2044,81 @@ INSERT INTO cfrParts(
 );
 
 -- =========================================
+-- COMMENTS
+-- =========================================
+ INSERT INTO comments (
+    comment_id,
+    comment_on,
+    comment_on_document_id,
+    duplicate_comments,
+    address1,
+    address2,
+    agency_id,
+    city,
+    category,
+    comment,
+    country,
+    email,
+    fax,
+    field1,
+    field2,
+    first_name,
+    gov_agency,
+    gov_agency_type,
+    last_name,
+    organization,
+    phone,
+    posted_date,
+    postmark_date,
+    reason_withdrawn,
+    receive_date,
+    restrict_reason,
+    restrict_reason_type,
+    state_province_region,
+    subtype,
+    title,
+    tracking_nbr,
+    withdrawn,
+    zip
+) VALUES (
+    'FAA-2012-0495-0003',
+    '0900006481022d98',
+    'FAA-2012-0495-0001',
+    0,
+    '5809 Sterling Trail',
+    NULL,
+    'FAA',
+    'Dallas',
+    NULL,
+    'In reference to Docket No. FAA&ndash;2012&ndash;0495; Directorate Identifier 2011&ndash;NM&ndash;236&ndash;AD<br/><br/>On October 20, 2011, Gulfstream Aerospace (GAC) issued service bulletin 200-32-389, to address degraded brake performance experienced by 2 operator&#39;s, after landing.  Subsequent investigation revealed the affected brakes wear indicator pins indicated remaining life, but the brakes were worn to the minimum pad thickness as specified in the brake manufacturers Component Maintenance Manual (CMM).  Initially, GAC internal audit findings indicated that certain brake assemblies that had been through overhaul at GACs in house Original Equipment Manufacturer (OEM) approved brake Repair and Overhaul (R&amp;O) facility were suspect, because these brakes had wear indicator pins that had been cut during overhaul, longer than that specified in the manufacturers CCM, resulting in the degraded brake performance which had been previously reported.  When the error was discovered, GAC performed an internal audit of all brake assemblies that had been through GAC in-house R&amp;O facility dating back several years, identifying multiple suspect brake assemblies that were identified by S/N and date of overhaul and/or repair.  The SB targeted all suspect brake assemblies. <br/><br/>As of July 16, 2012, GAC can account for 98% fleet compliance with either the original issue or revision 1 of this SB.  There are 3 ships noncompliant as of June 25, 2012.  G200 S/N 012, this aircraft has been totaled and out of service, never to be airworthy again.  G200 S//N 022.  This aircraft is currently out of service, but will be going through a pre-buy inspection in the next few weeks.  The aircraft will be flown to an authorized facility for this pre-buy and the SB will have to be accomplished (as well as some other calendar maintenance items and inspections), prior to any repositioning ferry flight.  G200 S/N 035 is currently scheduled into heavy maintenance July 17, 2012, at which time the SB will be complied with.  Based upon this'
+    'United States',
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    'Gene'
+    'FAA',
+    'Federal',
+    'Herrera',
+    'Gulfstream Aerospace',
+    null,
+    '2012-07-17T04:00:00Z',
+    null,
+    null,
+    '2012-07-17T04:00:00Z',
+    null,
+    null,
+    null,
+    null,
+    null,
+    'Gulfstream Aerospace',
+    null,
+    '8109de63',
+    false,
+    '75071'
+);
+
+-- =========================================
 -- FEDERAL REGISTER DOCUMENTS
 -- =========================================
 -- Made up for now until we have actual data
