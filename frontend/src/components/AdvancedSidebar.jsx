@@ -35,7 +35,7 @@ export default function AdvancedSidebar({
   setYearTo,
   agencySearch,
   setAgencySearch,
-  agenciesToShow,
+  // agenciesToShow is now fetched internally — removed from props
   selectedAgencies,
   setSelectedAgencies,
   docType,
@@ -53,7 +53,37 @@ export default function AdvancedSidebar({
   //const statuses = ["Open", "Closed", "Pending"];
   const [agencyOrder, setAgencyOrder] = useState([]);
   const [selectedTitle, setSelectedTitle] = useState("");
+
+  // FIX: agenciesToShow is now local state, fetched from /agencies endpoint
+  const [agenciesToShow, setAgenciesToShow] = useState([]);
+  const [agenciesLoading, setAgenciesLoading] = useState(false);
+  const [agenciesError, setAgenciesError] = useState(null);
+
   const titles = Array.from({ length: 50 }, (_, i) => i + 1);
+
+  // Fetch agencies from the /agencies endpoint
+  useEffect(() => {
+    setAgenciesLoading(true);
+    setAgenciesError(null);
+
+    fetch("/agencies")
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((ids) => {
+        // Endpoint returns plain strings like ["EPA", "DOT", ...]
+        // Sidebar expects { code, name } shape
+        setAgenciesToShow(ids.map((id) => ({ code: id, name: id })));
+        console.log("agencies from API:", ids);
+        console.log("total agencies:", ids.length);
+      })
+      .catch((err) => {
+        console.error("Failed to load agencies:", err);
+        setAgenciesError("Could not load agencies.");
+      })
+      .finally(() => setAgenciesLoading(false));
+  }, []);
 
   const selectedCfrList = useMemo(() => {
     return Object.entries(selectedCfrParts).flatMap(([title, parts]) =>
@@ -126,19 +156,22 @@ export default function AdvancedSidebar({
     );
   }
 
-  const cfrParts = selectedTitle
-  ? generatePartsForTitle(selectedTitle)
-  : [];
-
   // Because different titles have differing amount of CFR Parts, the following structure
   // Uses information from ecfr.gov to build the appropriate amount of parts per title
+
+  // FIX: useMemo prevents new array reference on every render (was causing infinite loop)
+  const cfrParts = useMemo(
+    () => (selectedTitle ? generatePartsForTitle(selectedTitle) : []),
+    [selectedTitle]
+  );
 
   const [cfrSearch, setCfrSearch] = useState("");
   const [cfrOrder, setCfrOrder] = useState([]);
 
+  // FIX: depend on selectedTitle not the array itself (array ref changed every render)
   useEffect(() => {
     setCfrOrder(cfrParts);
-  }, [cfrParts]);
+  }, [selectedTitle]);
 
   const orderedAgencies = useMemo(() => {
     const order =
@@ -150,10 +183,16 @@ export default function AdvancedSidebar({
   }, [agenciesToShow, agencyOrder]);
 
   const visibleAgencies = useMemo(() => {
-    if (agencySearch.trim()) {
-      return orderedAgencies;
+    const q = agencySearch.trim().toLowerCase();
+  
+    // If user typed something, filter by their query
+    if (q) {
+      return orderedAgencies.filter(
+        a => a.code.toLowerCase().includes(q) || a.name.toLowerCase().includes(q)
+      );
     }
-
+  
+    // If nothing is in the search bar, show atleast 5 agencies
     const minVisible = Math.max(5, selectedAgencies.size);
     return orderedAgencies.slice(0, minVisible);
   }, [agencySearch, orderedAgencies, selectedAgencies.size]);
@@ -281,7 +320,7 @@ export default function AdvancedSidebar({
               const start = new Date();
               start.setFullYear(start.getFullYear() - 1);
 
-              const format = (d) => d.toISOString().split("T")[0];
+              const format = (d) => d.toLocaleDateString("en-CA");
               setYearFrom(format(start));
               setYearTo(format(end));
               setOnchange([start, end]);
@@ -298,7 +337,7 @@ export default function AdvancedSidebar({
               const start = new Date();
               start.setMonth(start.getMonth() - 6);
 
-              const format = (d) => d.toISOString().split("T")[0];
+              const format = (d) => d.toLocaleDateString("en-CA");
               setYearFrom(format(start));
               setYearTo(format(end));
               setOnchange([start, end]);
@@ -371,7 +410,7 @@ export default function AdvancedSidebar({
                     [start, end] = [end, start];
                   }
 
-                  const format = (d) => d.toISOString().split("T")[0];
+                  const format = (d) => d.toLocaleDateString("en-CA");
 
                   setOnchange([start, end]);
                   setYearFrom(format(start));
@@ -390,22 +429,34 @@ export default function AdvancedSidebar({
               placeholder="Search agencies…"
             />
 
-            <div className="agencyListStatic">
-              {visibleAgencies.map((a) => (
-                <label key={a.code} className="check">
-                  <input
-                    type="checkbox"
-                    checked={selectedAgencies.has(a.code)}
-                    onChange={() => toggleAgency(a.code)}
-                  />
-                  <span>
-                    {a.code} — {a.name}
-                  </span>
-                </label>
-              ))}
-            </div>
+            {agenciesLoading && (
+              <div className="hintText">Loading agencies…</div>
+            )}
 
-            {!agencySearch.trim() && selectedAgencies.size <= 5 && (
+            {agenciesError && (
+              <div className="hintText" style={{ color: "red" }}>
+                {agenciesError}
+              </div>
+            )}
+
+            {!agenciesLoading && !agenciesError && (
+              <div className="agencyListStatic">
+                {visibleAgencies.map((a) => (
+                  <label key={a.code} className="check">
+                    <input
+                      type="checkbox"
+                      checked={selectedAgencies.has(a.code)}
+                      onChange={() => toggleAgency(a.code)}
+                    />
+                    <span>
+                      {a.code} — {a.name}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            )}
+
+            {!agencySearch.trim() && selectedAgencies.size <= 5 && !agenciesLoading && (
               <div className="hintText">
                 Showing top 5 agencies. Selecting an agency moves it to the top.
               </div>
@@ -465,7 +516,6 @@ export default function AdvancedSidebar({
           </CollapsibleSection>
           )}
 
-
           {/* Doc type */}
           <section className="section">
             <h3>Docket Type</h3>
@@ -480,7 +530,6 @@ export default function AdvancedSidebar({
               </label>
             ))}
           </section>
-
 
           <div className="actions">
             <button className="btn btn-ghost" onClick={clearAdvanced}>

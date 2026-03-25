@@ -5,7 +5,9 @@ export default defineConfig({
     plugins: [react()],
     server: {
         proxy: {
-            '/search': 'http://127.0.0.1:80'
+            '/search': 'http://127.0.0.1:80',
+            '/agencies': 'http://127.0.0.1:80'
+
         }
     }
 })
