@@ -163,6 +163,45 @@ INSERT INTO dockets (
     'AD-2024-00637-T; The Boeing Company 767-200 Series; 767-300 Series; 767-300F Series; 767-400ER Series airplanes; Inspection of lower underwing longeron fitting',
     'Airworthiness Directives'
 );
+INSERT INTO dockets (
+    docket_id,
+    docket_api_link,
+    agency_id,
+    docket_category,
+    docket_type,
+    effective_date,
+    flex_field1,
+    flex_field2,
+    modify_date,
+    organization,
+    petition_nbr,
+    program,
+    rin,
+    short_title,
+    flex_subtype1,
+    flex_subtype2,
+    docket_title,
+    docket_abstract
+) VALUES (
+    'FAA-2012-0495',
+    'https://api.regulations.gov/v4/dockets/FAA-2012-0495',
+    'FAA',
+    'Pending',
+    'Rulemaking',
+    '2012-05-02T04:00:00Z',
+    NULL,
+    NULL,
+    '2024-08-26T13:03:06Z',
+    NULL,
+    NULL,
+    NULL,
+    '2120-AA64',
+    NULL,
+    'Airworthiness Directives',
+    NULL,
+    'Gulfstream Aerospace LP (Type Certificate previously held by Israel Aircraft Industries, Ltd.) Model Galaxy and Gulfstream 200 airplanes',
+    'Gulfstream Aerospace LP (Type Certificate previously held by Israel Aircraft Industries, Ltd.) Model Galaxy and Gulfstream 200 airplanes',
+
 
 -- =========================================
 -- DOCUMENTS
