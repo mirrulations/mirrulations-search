@@ -201,6 +201,7 @@ INSERT INTO dockets (
     NULL,
     'Gulfstream Aerospace LP (Type Certificate previously held by Israel Aircraft Industries, Ltd.) Model Galaxy and Gulfstream 200 airplanes',
     'Gulfstream Aerospace LP (Type Certificate previously held by Israel Aircraft Industries, Ltd.) Model Galaxy and Gulfstream 200 airplanes',
+);
 
 
 -- =========================================
