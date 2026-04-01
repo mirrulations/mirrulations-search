@@ -353,6 +353,28 @@
     align-items: center;
   }
 
+  .collections-docket-search-wrap {
+    margin: 0 0 16px;
+  }
+
+  .collections-docket-search {
+    width: min(440px, 100%);
+    height: 48px;
+    border-radius: 14px;
+    border: 1px solid #d8dcee;
+    background: #fff;
+    padding: 0 16px;
+    font-size: 15px;
+    color: #202635;
+    box-shadow: 0 6px 16px rgba(32, 38, 53, 0.05);
+  }
+
+  .collections-docket-search:focus {
+    outline: none;
+    border-color: #5a5fe6;
+    box-shadow: 0 0 0 4px rgba(90, 95, 230, 0.12);
+  }
+
   .collections-action-btn {
     height: 54px;
     border-radius: 16px;
@@ -457,6 +479,10 @@
     .collections-toolbar {
       flex-direction: column;
       align-items: flex-start;
+    }
+
+    .collections-docket-search {
+      width: 100%;
     }
 
     .collections-action-btn,

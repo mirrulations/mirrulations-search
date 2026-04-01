@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   getCollections,
   createCollection,
@@ -20,6 +20,12 @@ export default function Collections() {
   const [error, setError] = useState("");
   const [unauthorized, setUnauthorized] = useState(false);
   const [docketDetails, setDocketDetails] = useState({});
+  const [docketSearch, setDocketSearch] = useState("");
+
+  const selectedCollection = collections.find(
+    (collection) => collection.collection_id === selectedCollectionId
+  );
+  const selectedDocketIds = selectedCollection?.docket_ids || [];
 
 
   const loadCollections = async () => {
@@ -65,6 +71,10 @@ export default function Collections() {
             return next;
         });
     });
+  }, [selectedCollectionId]);
+
+  useEffect(() => {
+    setDocketSearch("");
   }, [selectedCollectionId]);
 
   const handleCreate = async (e) => {
@@ -148,10 +158,24 @@ export default function Collections() {
     );
   }
 
-  const selectedCollection = collections.find(
-    (collection) => collection.collection_id === selectedCollectionId
-  );
-  const selectedDocketIds = selectedCollection?.docket_ids || [];
+  const filteredDocketIds = useMemo(() => {
+    const query = docketSearch.trim().toLowerCase();
+    if (!query) return selectedDocketIds;
+
+    return selectedDocketIds.filter((docketId) => {
+      const item = docketDetails[docketId];
+      if (!item) {
+        return docketId.toLowerCase().includes(query);
+      }
+
+      return [
+        item.docket_id,
+        item.docket_title,
+        item.agency_id,
+        item.docket_type,
+      ].some((value) => (value || "").toLowerCase().includes(query));
+    });
+  }, [docketDetails, docketSearch, selectedDocketIds]);
 
   const handleDownloadAll = () => {
     if (!selectedCollection) return;
@@ -239,8 +263,8 @@ export default function Collections() {
             <h1 className="collections-title">{selectedCollection.name}</h1>
             <div className="collections-toolbar">
               <p className="collections-summary">
-                Showing dockets in "{selectedCollection.name}" • {selectedDocketIds.length}{" "}
-                docket{selectedDocketIds.length === 1 ? "" : "s"} found
+                Showing dockets in "{selectedCollection.name}" • {filteredDocketIds.length}{" "}
+                docket{filteredDocketIds.length === 1 ? "" : "s"} found
               </p>
               <div className="collections-actions">
                 <button
@@ -270,11 +294,27 @@ export default function Collections() {
               </div>
             </div>
 
+            {selectedDocketIds.length > 0 && (
+              <div className="collections-docket-search-wrap">
+                <input
+                  type="text"
+                  className="collections-docket-search"
+                  placeholder="Search this collection's dockets..."
+                  value={docketSearch}
+                  onChange={(e) => setDocketSearch(e.target.value)}
+                />
+              </div>
+            )}
+
             {selectedDocketIds.length === 0 ? (
               <p className="collections-muted">No dockets in this collection.</p>
+            ) : filteredDocketIds.length === 0 ? (
+              <p className="collections-muted">
+                No dockets in this collection match "{docketSearch}".
+              </p>
             ) : (
               <div className="collection-results">
-                {selectedDocketIds.map((docketId) => {
+                {filteredDocketIds.map((docketId) => {
                   const item = docketDetails[docketId];
                   if (!item) return <div key={docketId} className="result-card"><p>Loading...</p></div>;
                   return (
