@@ -212,3 +212,20 @@ CREATE TABLE IF NOT EXISTS collection_dockets (
     PRIMARY KEY (collection_id, docket_id)
 );
 
+-- =========================================
+-- DOWNLOAD JOBS TABLE
+-- =========================================
+-- Stores metadata about user-initiated download jobs for collections of dockets, including job status and S3 path for completed downloads.
+
+CREATE TABLE IF NOT EXISTS download_jobs (
+    job_id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_email      VARCHAR(320) NOT NULL REFERENCES users(email),
+    collection_id   INT REFERENCES collections(collection_id),
+    status          VARCHAR(20) NOT NULL DEFAULT 'pending',
+    format          VARCHAR(10) NOT NULL,
+    include_binary  BOOLEAN DEFAULT FALSE,
+    s3_path         TEXT,
+    error           TEXT,
+    created_at      TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at      TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
