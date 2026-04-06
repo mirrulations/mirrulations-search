@@ -2,7 +2,6 @@ import {ColorRing} from 'react-loader-spinner'
 import { useState } from "react";
 import CollectionModal from "./CollectionModal";
 
-
 const ECFR_URL = "https://www.ecfr.gov";
 const MAX_VOLUME = 10000;
 const RATIO_WEIGHT = 0.7;
@@ -26,6 +25,7 @@ function scoreResult(item) {
 export default function ResultsPanel({ results, loading, hasSearched, query, unauthorized }) {
 
  const [modalDocketId, setModalDocketId] = useState(null);
+
  if (unauthorized) {
    return (
      <div className="results">

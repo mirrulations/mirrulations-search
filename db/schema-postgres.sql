@@ -76,7 +76,11 @@ CREATE TABLE IF NOT EXISTS documentsWithFRdoc (
     topics VARCHAR(250)[],
     is_withdrawn BOOLEAN DEFAULT FALSE,
     postal_code VARCHAR(10),
-    frdocnum VARCHAR(50)
+    frdocnum VARCHAR(50),
+    attachments_self_link    VARCHAR(2000),
+    attachments_related_link VARCHAR(2000),
+    file_formats             JSONB,
+    display_properties       JSONB
 );
 
 -- =========================================

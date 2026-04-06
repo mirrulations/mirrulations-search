@@ -297,8 +297,7 @@ export default function AdvancedSidebar({
 
           {/**Date Section */}
 
-          <section className="section">
-            <h3>Date Range</h3>
+          <CollapsibleSection title="Date Range">
 
             <div className="chipRow">
               <button
@@ -419,7 +418,7 @@ export default function AdvancedSidebar({
                 value={value}
               />
             </div>
-          </section>
+          </CollapsibleSection>
 
           {/* Agency */}
           <CollapsibleSection title="Agency">

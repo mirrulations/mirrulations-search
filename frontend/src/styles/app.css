@@ -32,6 +32,10 @@
 	gap: 22px;
 	align-items:start;
   }
+
+  .layout-single{
+	display:block;
+  }
   
   .sidebar{
 	background: linear-gradient(180deg,#ffffff 0%, #fbfbff 100%);
@@ -175,6 +179,12 @@
 
   .auth-section{ display:flex; align-items:center; gap:12px; }
   .auth-name{ font-weight:600; color:#333; }
+
+  .collections-nav-btn{
+    gap: 8px;
+    padding: 0 16px;
+    border-radius: 14px;
+  }
   
   .btn-ghost{
 	background: transparent;

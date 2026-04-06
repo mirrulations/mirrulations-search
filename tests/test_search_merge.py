@@ -216,3 +216,65 @@ def test_merge_os_hits_all_title_matches_falls_back_to_title_only():
     assert out["results"][0]["documentDenominator"] == 10
     assert out["results"][0]["commentDenominator"] == 2
     assert not db.get_dockets_by_ids_calls
+
+
+def test_merge_duplicate_os_hits_for_same_docket_only_fetch_once():
+    """Second OpenSearch row with the same docket_id is skipped in _get_new_docket_ids."""
+    sql_rows = [{"docket_id": "A", "docket_title": "ta", "cfr_refs": []}]
+    os_hits = [
+        {"docket_id": "B", "document_match_count": 1, "comment_match_count": 0},
+        {"docket_id": "B", "document_match_count": 1, "comment_match_count": 0},
+    ]
+    by_id_rows = [{"docket_id": "B", "docket_title": "tb", "cfr_refs": []}]
+    db = _FakeDbMerge(sql_rows, os_hits, by_id_rows)
+    logic = InternalLogic("x", db_layer=db)
+    out = logic.search("q", page=1, page_size=10)
+    assert db.get_dockets_by_ids_calls == [["B"]]
+    b_rows = [r for r in out["results"] if r["docket_id"] == "B"]
+    assert len(b_rows) == 1
+    assert b_rows[0]["documentNumerator"] == 1
+
+
+def test_merge_full_text_kept_when_cfr_pattern_filter_matches():
+    """Non-dict CFR filter (substring patterns) uses _cfr_part_patterns_match_row."""
+    sql_rows = [{"docket_id": "A", "docket_title": "ta", "cfr_refs": [], "agency_id": "CMS"}]
+    os_hits = [{"docket_id": "B", "document_match_count": 1, "comment_match_count": 0}]
+    by_id_rows = [
+        {
+            "docket_id": "B",
+            "docket_title": "tb",
+            "cfr_refs": [{"title": "42", "cfrParts": {"413": "http://x"}}],
+            "agency_id": "CMS",
+        },
+    ]
+    db = _FakeDbMerge(sql_rows, os_hits, by_id_rows)
+    logic = InternalLogic("x", db_layer=db)
+    out = logic.search("q", cfr_part_param=["413"], page=1, page_size=10)
+    assert [r["docket_id"] for r in out["results"]] == ["B", "A"]
+
+
+class _FakeDbCollectionDockets:
+    """Minimal db_layer for InternalLogic.get_collection_dockets."""
+
+    def get_collections(self, user_email):  # pylint: disable=unused-argument
+        return [{"collection_id": 7, "docket_ids": ["DOCKET-1"]}]
+
+    def get_dockets_by_ids(self, docket_ids):
+        return [
+            {
+                "docket_id": "DOCKET-1",
+                "docket_title": "T",
+                "cfr_refs": [{"title": "40", "cfrParts": {"99": "u"}}],
+                "modify_date": date(2024, 3, 1),
+            }
+        ]
+
+
+def test_get_collection_dockets_non_empty_sanitizes_and_paginates():
+    """Branch with docket_ids loads rows, sanitizes modify_date, returns slice + pagination."""
+    logic = InternalLogic("x", db_layer=_FakeDbCollectionDockets())
+    out = logic.get_collection_dockets(7, "user@example.com", page=1, page_size=10)
+    assert out["pagination"]["total_results"] == 1
+    assert out["pagination"]["total_pages"] == 1
+    assert out["results"][0]["modify_date"] == "2024-03-01"
+    assert "cfrPart" in out["results"][0]
