@@ -1,5 +1,7 @@
 """Internal logic module for search operations with pagination"""
+import cmd
 from datetime import date, datetime
+import subprocess
 from typing import List
 
 from mirrsearch.db import cfr_part_filter_patterns, _cfr_exact_title_part_pairs, get_db
@@ -340,3 +342,6 @@ class InternalLogic:  # pylint: disable=too-few-public-methods
                 "has_prev": page > 1,
             }
         }
+
+    def get_agencies(self) -> List[str]:
+        return self.db_layer.get_agencies()
