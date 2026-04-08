@@ -115,7 +115,22 @@ def parse_no_htm_dockets(filepath: Path) -> list[tuple[str, str]]:
                 # Agency ID = everything up to the first -YYYY- segment
                 agency_id = docket_id.split("-")[0]
                 dockets.append((agency_id, docket_id))
+    
+    def sort_key(item):
+        _, docket_id = item
+        parts = docket_id.split("-")
 
+        # Expect format: AGENCY-YYYY-NNNN
+        try:
+            year = int(parts[1])
+            number = int(parts[2])
+        except (IndexError, ValueError):
+            # fallback for weird formats
+            return (0, 0)
+
+        return (year, number)
+    
+    dockets.sort(key=sort_key, reverse=True)  # Newest first
     return dockets
 
 # ── Checkpoint helpers ────────────────────────────────────────────────────────
