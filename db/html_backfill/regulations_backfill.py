@@ -115,25 +115,29 @@ def parse_no_htm_dockets(filepath: Path) -> list[tuple[str, str]]:
                 # Agency ID = everything up to the first -YYYY- segment
                 agency_id = docket_id.split("-")[0]
                 dockets.append((agency_id, docket_id))
-    
+
     def sort_key(item):
         _, docket_id = item
         parts = docket_id.split("-")
 
         # Find numeric parts (year and number)
-        nums = []
-        for p in reversed(parts):
-            if p.isdigit():
-                nums.append(int(p))
-            if len(nums) == 2:  # Got both year and number
-                break
-        
-        if len(nums) == 2:
-            number, year = nums[0], nums[1]
-            return (year, number)
-        
-        return (0, 0)  # Fallback if pattern doesn't match
-    
+        for i, p in enumerate(parts):
+        # Identify the year
+            if p.isdigit() and 1900 <= int(p) <= 2100:
+                year = int(p)
+
+                # Take ALL numeric parts after the year
+                tail = []
+                for x in parts[i + 1:]:
+                    if x.isdigit():
+                        tail.append(int(x))
+                    else:
+                        break
+
+                return (year, *tail)
+
+        return (0,)  # Fallback if pattern doesn't match
+
     dockets.sort(key=sort_key, reverse=True)  # Newest first
     return dockets
 
