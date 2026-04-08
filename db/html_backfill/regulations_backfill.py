@@ -120,15 +120,19 @@ def parse_no_htm_dockets(filepath: Path) -> list[tuple[str, str]]:
         _, docket_id = item
         parts = docket_id.split("-")
 
-        # Expect format: AGENCY-YYYY-NNNN
-        try:
-            year = int(parts[1])
-            number = int(parts[2])
-        except (IndexError, ValueError):
-            # fallback for weird formats
-            return (0, 0)
-
-        return (year, number)
+        # Find numeric parts (year and number)
+        nums = []
+        for p in reversed(parts):
+            if p.isdigit():
+                nums.append(int(p))
+            if len(nums) == 2:  # Got both year and number
+                break
+        
+        if len(nums) == 2:
+            number, year = nums[0], nums[1]
+            return (year, number)
+        
+        return (0, 0)  # Fallback if pattern doesn't match
     
     dockets.sort(key=sort_key, reverse=True)  # Newest first
     return dockets
