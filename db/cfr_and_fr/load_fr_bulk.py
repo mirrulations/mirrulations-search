@@ -50,7 +50,7 @@ ON CONFLICT (document_number) DO NOTHING
 """
 
 INSERT_CFRPARTS_SQL = """
-INSERT INTO cfrparts (frdocnum, title, cfrpart, citation_url)
+INSERT INTO cfrparts (frdocnum, title, cfrpart)
 VALUES %s
 ON CONFLICT (frdocnum, title, cfrpart) DO NOTHING
 """
@@ -84,6 +84,8 @@ def db_config() -> dict[str, Any]:
         "database": os.getenv("DB_NAME", "mirrulations"),
         "user": os.getenv("DB_USER", "postgres"),
         "password": os.getenv("DB_PASSWORD", ""),
+        "sslmode": "verify-full",
+        "sslrootcert": "/certs/global-bundle.pem",
     }
 
 
@@ -130,7 +132,7 @@ def build_cfr_rows(
         part = ref.get("part")
         if not is_numeric(title) or not is_numeric(part):
             continue
-        rows.append((document_number, str(int(str(title))), str(part), ref.get("citation_url")))
+        rows.append((document_number, str(int(str(title))), str(part)))
     return rows
 
 

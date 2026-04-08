@@ -50,3 +50,22 @@ export async function getDocketsByIds(docketIds) {
     if (!response.ok) throw new Error(`Failed to fetch dockets: ${response.status}`);
     return response.json();
 }
+
+export async function getCollectionDockets(collectionId, page = 1) {
+    const params = new URLSearchParams();
+    params.append("page", page);
+    const response = await fetch(`/collections/${collectionId}/dockets?${params.toString()}`);
+    if (response.status === 401) throw new Error("UNAUTHORIZED");
+    if (!response.ok) throw new Error(`Failed to fetch collection dockets: ${response.status}`);
+
+    const results = await response.json();
+    const pagination = {
+        page: Number(response.headers.get("X-Page")),
+        pageSize: Number(response.headers.get("X-Page-Size")),
+        totalResults: Number(response.headers.get("X-Total-Results")),
+        totalPages: Number(response.headers.get("X-Total-Pages")),
+        hasNext: response.headers.get("X-Has-Next") === "true",
+        hasPrev: response.headers.get("X-Has-Prev") === "true",
+    };
+    return { results, pagination };
+}

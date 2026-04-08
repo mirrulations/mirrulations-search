@@ -76,7 +76,11 @@ CREATE TABLE IF NOT EXISTS documentsWithFRdoc (
     topics VARCHAR(250)[],
     is_withdrawn BOOLEAN DEFAULT FALSE,
     postal_code VARCHAR(10),
-    frdocnum VARCHAR(50)
+    frdocnum VARCHAR(50),
+    attachments_self_link    VARCHAR(2000),
+    attachments_related_link VARCHAR(2000),
+    file_formats             JSONB,
+    display_properties       JSONB
 );
 
 -- =========================================
@@ -206,5 +210,26 @@ CREATE TABLE IF NOT EXISTS collection_dockets (
     collection_id INT NOT NULL REFERENCES collections(collection_id) ON DELETE CASCADE,
     docket_id VARCHAR(50) NOT NULL REFERENCES dockets(docket_id),
     PRIMARY KEY (collection_id, docket_id)
+);
+
+-- =========================================
+-- DOWNLOAD JOBS TABLE
+-- =========================================
+-- Tracks async download requests submitted by users.
+-- status: 'pending' | 'processing' | 'complete' | 'failed'
+-- s3_path: set once the archive is uploaded to S3 (NULL until complete)
+-- expires_at: used by prune_expired_download_jobs to clean up old records
+
+CREATE TABLE IF NOT EXISTS download_jobs (
+    job_id UUID NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+    user_email VARCHAR(320) NOT NULL REFERENCES users(email),
+    docket_ids TEXT[] NOT NULL,
+    format VARCHAR(20) NOT NULL DEFAULT 'zip',
+    include_binaries BOOLEAN NOT NULL DEFAULT FALSE,
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+    s3_path VARCHAR(2000),
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW() + INTERVAL '7 days'
 );
 

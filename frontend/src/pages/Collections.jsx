@@ -1,13 +1,24 @@
+<<<<<<< HEAD
 import { useEffect, useMemo, useState } from "react";
+=======
+import { useEffect, useState, useRef,useMemo } from "react";
+
+>>>>>>> a05f40103aad1f956b6774f0e6ef28c24448d3c4
 import {
   getCollections,
   createCollection,
   deleteCollection,
   removeDocketFromCollection,
-  getDocketsByIds,
+  getCollectionDockets,
 } from "../api/collectionsApi";
+import DownloadModal from "./DownloadModal";
 import "../styles/collections.css";
+import { ArrowLeftIcon, ArrowRightIcon } from "@phosphor-icons/react";
+
 const ECFR_URL = "https://www.ecfr.gov";
+const MAX_DOCKETS = 10;
+const SORT_MODIFIED = "modified";
+const SORT_ALPHABETICAL = "alphabetical";
 
 export default function Collections() {
   const [collections, setCollections] = useState([]);
@@ -19,6 +30,7 @@ export default function Collections() {
   const [editMode, setEditMode] = useState(false);
   const [error, setError] = useState("");
   const [unauthorized, setUnauthorized] = useState(false);
+<<<<<<< HEAD
   const [docketDetails, setDocketDetails] = useState({});
   const [docketSearch, setDocketSearch] = useState("");
 
@@ -26,7 +38,30 @@ export default function Collections() {
     (collection) => collection.collection_id === selectedCollectionId
   );
   const selectedDocketIds = selectedCollection?.docket_ids || [];
+=======
+  const [dockets, setDockets] = useState([]);
+  const [pagination, setPagination] = useState(null);
+  const [page, setPage] = useState(1);
+  const [docketsLoading, setDocketsLoading] = useState(false);
+  const [showDownloadModal, setShowDownloadModal] = useState(false);
+  const [sortMode, setSortMode] = useState(SORT_MODIFIED);
+  const [sortMenuOpen, setSortMenuOpen] = useState(false);
+  const sortMenuRef = useRef(null);
+>>>>>>> a05f40103aad1f956b6774f0e6ef28c24448d3c4
 
+  useEffect(() => {
+    function handlePointerDown(e) {
+      if (!sortMenuRef.current?.contains(e.target)) {
+        setSortMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("touchstart", handlePointerDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("touchstart", handlePointerDown);
+    };
+  }, []);
 
   const loadCollections = async () => {
     setLoading(true);
@@ -62,20 +97,41 @@ export default function Collections() {
     }
   }, [collections, selectedCollectionId]);
 
+  const loadDockets = async (collectionId, pageNum, sort) => {
+    setDocketsLoading(true);
+    try {
+      const { results, pagination: p } = await getCollectionDockets(collectionId, pageNum, sort);
+      setDockets(results);
+      setPagination(p);
+    } catch (err) {
+      if (err.message === "UNAUTHORIZED") setUnauthorized(true);
+      else setError("Failed to load dockets.");
+    } finally {
+      setDocketsLoading(false);
+    }
+  };
+
   useEffect(() => {
-    if (!selectedDocketIds.length) return;
-    getDocketsByIds(selectedDocketIds).then(results => {
-        setDocketDetails(prev => {
-            const next = { ...prev };
-            results.forEach(d => { next[d.docket_id] = d; });
-            return next;
-        });
-    });
+    if (!selectedCollectionId) return;
+    setPage(1);
+    loadDockets(selectedCollectionId, 1, sortMode);
   }, [selectedCollectionId]);
 
   useEffect(() => {
+<<<<<<< HEAD
     setDocketSearch("");
   }, [selectedCollectionId]);
+=======
+    if (!selectedCollectionId) return;
+    loadDockets(selectedCollectionId, page, sortMode);
+  }, [page]);
+
+  useEffect(() => {
+    if (!selectedCollectionId) return;
+    setPage(1);
+    loadDockets(selectedCollectionId, 1, sortMode);
+  }, [sortMode]);
+>>>>>>> a05f40103aad1f956b6774f0e6ef28c24448d3c4
 
   const handleCreate = async (e) => {
     e.preventDefault();
@@ -91,10 +147,7 @@ export default function Collections() {
         name: trimmedName,
         docket_ids: [],
       };
-      setCollections((prev) => [
-        ...prev,
-        newCollection,
-      ]);
+      setCollections((prev) => [...prev, newCollection]);
       setSelectedCollectionId(created.collection_id);
       setShowCreateForm(false);
       setNewCollectionName("");
@@ -130,16 +183,7 @@ export default function Collections() {
     setError("");
     try {
       await removeDocketFromCollection(collectionId, docketId);
-      setCollections((prev) =>
-        prev.map((col) =>
-          col.collection_id === collectionId
-            ? {
-                ...col,
-                docket_ids: (col.docket_ids || []).filter((id) => id !== docketId),
-              }
-            : col
-        )
-      );
+      loadDockets(collectionId, page, sortMode);
     } catch (err) {
       if (err.message === "UNAUTHORIZED") {
         setUnauthorized(true);
@@ -158,6 +202,7 @@ export default function Collections() {
     );
   }
 
+<<<<<<< HEAD
   const filteredDocketIds = useMemo(() => {
     const query = docketSearch.trim().toLowerCase();
     if (!query) return selectedDocketIds;
@@ -176,22 +221,38 @@ export default function Collections() {
       ].some((value) => (value || "").toLowerCase().includes(query));
     });
   }, [docketDetails, docketSearch, selectedDocketIds]);
+=======
+  const selectedCollection = collections.find(
+    (collection) => collection.collection_id === selectedCollectionId
+  );
+  const selectedDocketIds = selectedCollection?.docket_ids || [];
+  const overLimit = selectedDocketIds.length > MAX_DOCKETS;
+  const sortLabel = sortMode === SORT_ALPHABETICAL ? "Alphabetical" : "Last modified";
+>>>>>>> a05f40103aad1f956b6774f0e6ef28c24448d3c4
 
   const handleDownloadAll = () => {
-    if (!selectedCollection) return;
-    const lines = [
-      `Collection: ${selectedCollection.name}`,
-      "",
-      ...selectedDocketIds.map((docketId) => docketId),
-    ];
-    const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `${selectedCollection.name.replace(/\s+/g, "-").toLowerCase()}-dockets.txt`;
-    link.click();
-    URL.revokeObjectURL(url);
+    if (!selectedCollection || overLimit) return;
+    setShowDownloadModal(true);
   };
+
+
+  const sortedDockets = useMemo(() => {
+    const arr = [...dockets];
+  
+    if (sortMode === SORT_ALPHABETICAL) {
+      arr.sort((a, b) =>
+        (a.docket_title || "").localeCompare(b.docket_title || "", undefined, {
+          sensitivity: "base",
+        })
+      );
+    } else {
+      arr.sort((a, b) =>
+        new Date(b.modify_date) - new Date(a.modify_date)
+      );
+    }
+  
+    return arr;
+  }, [dockets, sortMode]);
 
   return (
     <section className="collections-page collections-layout">
@@ -199,7 +260,7 @@ export default function Collections() {
         <div className="collections-sidebar-header">
           <div>
             <h2>My Collections</h2>
-            <p>All your saved dockets in one place!</p>
+            <p>Save and revisit dockets—stable reference, not live search data.</p>
           </div>
           <button
             type="button"
@@ -263,37 +324,100 @@ export default function Collections() {
             <h1 className="collections-title">{selectedCollection.name}</h1>
             <div className="collections-toolbar">
               <p className="collections-summary">
+<<<<<<< HEAD
                 Showing dockets in "{selectedCollection.name}" • {filteredDocketIds.length}{" "}
                 docket{filteredDocketIds.length === 1 ? "" : "s"} found
+=======
+                Showing dockets in "{selectedCollection.name}" • {pagination?.totalResults ?? 0}{" "}
+                docket{(pagination?.totalResults ?? 0) === 1 ? "" : "s"} found
+                {overLimit && (
+                  <span style={{ color: "#c0392b", marginLeft: 8, fontWeight: 600 }}>
+                    · Limit of {MAX_DOCKETS} reached — remove dockets to download
+                  </span>
+                )}
+>>>>>>> a05f40103aad1f956b6774f0e6ef28c24448d3c4
               </p>
-              <div className="collections-actions">
-                <button
-                  type="button"
-                  className="collections-action-btn collections-action-btn-secondary"
-                  onClick={() => setEditMode((prev) => !prev)}
-                >
-                  {editMode ? "Done" : "Edit"}
-                </button>
-                <button
-                  type="button"
-                  className="collections-action-btn"
-                  onClick={handleDownloadAll}
-                  disabled={selectedDocketIds.length === 0}
-                >
-                  Download All
-                </button>
-                {editMode && (
+              <div className="collections-toolbar-right">
+                <div className="collections-sort-wrap" ref={sortMenuRef}>
                   <button
                     type="button"
-                    className="collection-delete"
-                    onClick={() => handleDeleteCollection(selectedCollection.collection_id)}
+                    className="collections-sort-trigger"
+                    aria-expanded={sortMenuOpen}
+                    aria-haspopup="listbox"
+                    aria-label="Sort dockets"
+                    onClick={() => setSortMenuOpen((o) => !o)}
                   >
-                    Delete Collection
+                    Sort
+                    <span className="collections-sort-trigger-value" aria-hidden>
+                      {sortLabel}
+                    </span>
                   </button>
-                )}
+                  {sortMenuOpen && (
+                    <ul className="collections-sort-menu" role="listbox">
+                      <li role="none">
+                        <button
+                          type="button"
+                          role="option"
+                          aria-selected={sortMode === SORT_MODIFIED}
+                          className={`collections-sort-menu-item${sortMode === SORT_MODIFIED ? " is-active" : ""}`}
+                          onClick={() => {
+                            setSortMode(SORT_MODIFIED);
+                            setSortMenuOpen(false);
+                          }}
+                        >
+                          Last modified
+                        </button>
+                      </li>
+                      <li role="none">
+                        <button
+                          type="button"
+                          role="option"
+                          aria-selected={sortMode === SORT_ALPHABETICAL}
+                          className={`collections-sort-menu-item${sortMode === SORT_ALPHABETICAL ? " is-active" : ""}`}
+                          onClick={() => {
+                            setSortMode(SORT_ALPHABETICAL);
+                            setSortMenuOpen(false);
+                          }}
+                        >
+                          Alphabetical
+                        </button>
+                      </li>
+                    </ul>
+                  )}
+                </div>
+                <div className="collections-actions">
+                  <button
+                    type="button"
+                    className="collections-action-btn collections-action-btn-secondary"
+                    onClick={() => setEditMode((prev) => !prev)}
+                  >
+                    {editMode ? "Done" : "Edit"}
+                  </button>
+                  <button
+                    type="button"
+                    className="collections-action-btn"
+                    onClick={handleDownloadAll}
+                    disabled={!pagination?.totalResults || overLimit}
+                    title={overLimit ? `Collections are limited to ${MAX_DOCKETS} dockets for download` : ""}
+                  >
+                    Download All
+                  </button>
+                  {editMode && (
+                    <button
+                      type="button"
+                      className="collection-delete"
+                      onClick={() =>
+                        handleDeleteCollection(selectedCollection.collection_id)
+                      }
+                    >
+                      Delete Collection
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
 
+<<<<<<< HEAD
             {selectedDocketIds.length > 0 && (
               <div className="collections-docket-search-wrap">
                 <input
@@ -307,12 +431,18 @@ export default function Collections() {
             )}
 
             {selectedDocketIds.length === 0 ? (
+=======
+            {docketsLoading ? (
+              <p className="collections-muted">Loading dockets...</p>
+            ) : dockets.length === 0 ? (
+>>>>>>> a05f40103aad1f956b6774f0e6ef28c24448d3c4
               <p className="collections-muted">No dockets in this collection.</p>
             ) : filteredDocketIds.length === 0 ? (
               <p className="collections-muted">
                 No dockets in this collection match "{docketSearch}".
               </p>
             ) : (
+<<<<<<< HEAD
               <div className="collection-results">
                 {filteredDocketIds.map((docketId) => {
                   const item = docketDetails[docketId];
@@ -346,15 +476,79 @@ export default function Collections() {
                                   onClick={() => handleRemoveDocket(selectedCollection.collection_id, docketId)}>
                                   Remove from Collection
                               </button>
+=======
+              <>
+                <div className="collection-results">
+                  {sortedDockets.map((item) => (
+                    <article key={item.docket_id} className="result-card">
+                      <h3 className="result-title">{item.docket_title}</h3>
+                      <div className="result-meta">
+                        <p><strong>Agency:</strong> {item.agency_id}</p>
+                        <p><strong>Docket-ID:</strong> {item.docket_id}</p>
+                        <p><strong>Docket type:</strong> {item.docket_type}</p>
+                        <p>
+                          <strong>CFR:</strong>{" "}
+                          {item.cfrPart && item.cfrPart.length > 0 ? (
+                            item.cfrPart.map((p, idx) => (
+                              <span key={idx}>
+                                <a href={p.link} target="_blank" rel="noopener noreferrer">
+                                  {p.title != null ? `${p.title} Part ${p.part}` : p.part}
+                                </a>
+                                {idx < item.cfrPart.length - 1 && ", "}
+                              </span>
+                            ))
+                          ) : (
+                            <a href={ECFR_URL} target="_blank" rel="noopener noreferrer">None</a>
+>>>>>>> a05f40103aad1f956b6774f0e6ef28c24448d3c4
                           )}
-                      </article>
-                  );
-              })}
-              </div>
+                        </p>
+                        <p><strong>Last modified date:</strong> {item.modify_date}</p>
+                      </div>
+                      {editMode && (
+                        <button
+                          className="collection-remove-docket"
+                          onClick={() =>
+                            handleRemoveDocket(selectedCollection.collection_id, item.docket_id)
+                          }
+                        >
+                          Remove from Collection
+                        </button>
+                      )}
+                    </article>
+                  ))}
+                </div>
+                <div className="pagination-div">
+                  <button
+                    className="page-button"
+                    disabled={!pagination?.hasPrev}
+                    onClick={() => setPage((p) => p - 1)}
+                  >
+                    <ArrowLeftIcon color="white" size={32} />
+                  </button>
+                  <span className="page-info">
+                    Page {pagination?.page} of {pagination?.totalPages}
+                  </span>
+                  <button
+                    className="page-button"
+                    disabled={!pagination?.hasNext}
+                    onClick={() => setPage((p) => p + 1)}
+                  >
+                    <ArrowRightIcon color="white" size={32} />
+                  </button>
+                </div>
+              </>
             )}
           </>
         )}
       </div>
+
+      {showDownloadModal && (
+        <DownloadModal
+          collectionName={selectedCollection?.name}
+          docketIds={selectedDocketIds}
+          onClose={() => setShowDownloadModal(false)}
+        />
+      )}
     </section>
   );
 }

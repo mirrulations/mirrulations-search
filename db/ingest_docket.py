@@ -36,11 +36,16 @@ import warnings
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-import boto3
+try:
+    import boto3
+    from botocore import UNSIGNED
+    from botocore.config import Config
+except ImportError:
+    boto3 = None
+    UNSIGNED = None
+    Config = None
 import psycopg2
 import psycopg2.errors
-from botocore import UNSIGNED
-from botocore.config import Config
 from psycopg2.extras import execute_values
 
 try:

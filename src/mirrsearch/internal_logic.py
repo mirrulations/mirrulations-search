@@ -1,5 +1,5 @@
 """Internal logic module for search operations with pagination"""
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import List
 
 from mirrsearch.db import cfr_part_filter_patterns, _cfr_exact_title_part_pairs, get_db
@@ -48,6 +48,29 @@ def _agency_matches_filter(row, agency):
     aid = (row.get("agency_id") or "").lower()
     return any((a or "").strip().lower() in aid for a in agency)
 
+def _modify_date_matches_filter(row, start_date=None, end_date=None): #pylint: disable=too-many-branches
+    """Return True if row's modify_date is within the optional start_date and end_date range."""
+    modify_date = row.get("modify_date")
+    if modify_date is None:
+        return True
+
+    # convert string -> datetime
+    if isinstance(modify_date, str):
+        modify_date = datetime.fromisoformat(modify_date)
+
+    # normalize to naive UTC for comparison
+    if modify_date.tzinfo is not None:
+        modify_date = modify_date.astimezone(timezone.utc).replace(tzinfo=None)
+
+    if start_date:
+        start = datetime.fromisoformat(start_date)
+        if modify_date < start:
+            return False
+    if end_date:
+        end = datetime.fromisoformat(end_date)
+        if modify_date > end:
+            return False
+    return True
 
 def _ref_has_exact_part(ref, title, part):
     """True if ref matches the given title and part exactly."""
@@ -90,7 +113,8 @@ def _sanitize_search_row_for_json(row):
         row["modify_date"] = _json_safe_scalar(row["modify_date"])
 
 
-def _row_matches_advanced_filters(row, docket_type_param, agency, cfr_part_param):
+def _row_matches_advanced_filters(row, docket_type_param, agency, cfr_part_param, #pylint: disable=too-many-arguments, too-many-positional-arguments
+                                  start_date=None, end_date=None):
     """
     Same constraints as _search_dockets_postgres for full-text rows loaded via get_dockets_by_ids.
     Drops OpenSearch-only hits that fail advanced filters.
@@ -99,6 +123,7 @@ def _row_matches_advanced_filters(row, docket_type_param, agency, cfr_part_param
         _docket_type_matches_filter(row, docket_type_param)
         and _agency_matches_filter(row, agency)
         and _cfr_matches_filter(row, cfr_part_param)
+        and _modify_date_matches_filter(row, start_date, end_date)
     )
 
 def _transform_cfr_refs(result):
@@ -122,7 +147,7 @@ class InternalLogic:  # pylint: disable=too-few-public-methods
     def search(self, query, docket_type_param=None, agency=None,
                cfr_part_param=None, start_date=None, end_date=None, page=1, page_size=10):
         # pylint: disable=too-many-arguments,too-many-positional-arguments
-        # pylint: disable=too-many-locals,too-many-branches,too-many-statements
+        # pylint: disable=too-many-branches,too-many-statements,too-many-locals
         """
         Search with pagination support.
 
@@ -153,6 +178,31 @@ class InternalLogic:  # pylint: disable=too-few-public-methods
         os_hits = self.db_layer.text_match_terms([(query or "").strip()])
         os_counts_by_id = {str(hit["docket_id"]): hit for hit in os_hits}
 
+        # Get new IDs from OpenSearch not in SQL results
+        new_ids_ordered = self._get_new_docket_ids(os_hits, title_ids)
+
+        # Enhance title rows with OpenSearch counts
+        self._enhance_rows_with_os_counts(title_rows, os_counts_by_id)
+
+        # Get full text rows for new IDs
+        full_text_rows = self._get_full_text_rows(
+            new_ids_ordered, os_counts_by_id, docket_type_param, agency, cfr_part_param,
+            start_date, end_date
+        )
+
+        all_results = title_rows + full_text_rows
+
+        # Add totals and scores
+        self._add_totals_and_scores(all_results)
+
+        # Sort results
+        self._sort_results(all_results)
+
+        # Paginate
+        return self._paginate_results( all_results, page, page_size)
+
+    def _get_new_docket_ids(self, os_hits, title_ids):
+        """Extract docket IDs from OpenSearch hits not already in title results."""
         new_ids_ordered = []
         seen_new = set()
         for hit in os_hits:
@@ -161,48 +211,59 @@ class InternalLogic:  # pylint: disable=too-few-public-methods
                 continue
             seen_new.add(did)
             new_ids_ordered.append(did)
+        return new_ids_ordered
 
-        # Attach numerators for title-matching cards (0 when OpenSearch doesn't have a hit)
-        for row in title_rows:
+    def _enhance_rows_with_os_counts(self, rows, os_counts_by_id):
+        """Add OpenSearch match counts to rows."""
+        for row in rows:
             did = _row_docket_key(row)
             hit = os_counts_by_id.get(did)
             row["document_match_count"] = hit["document_match_count"] if hit else 0
             row["comment_match_count"] = hit["comment_match_count"] if hit else 0
 
-        # Attach full-text-only cards
+    def _get_full_text_rows(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+            self, docket_ids, os_counts_by_id,
+                            docket_type_param, agency, cfr_part_param,
+                            start_date=None, end_date=None):
+        """Fetch and filter full text rows for docket IDs not in SQL results."""
+        if not docket_ids:
+            return []
+
+        fetched = self.db_layer.get_dockets_by_ids(docket_ids)
+        by_id = {str(r["docket_id"]): r for r in fetched}
+
         full_text_rows = []
-        if new_ids_ordered:
-            fetched = self.db_layer.get_dockets_by_ids(new_ids_ordered)
-            by_id = {str(r["docket_id"]): r for r in fetched}
-            for did in new_ids_ordered:
-                row = by_id.get(did)
-                if row is None:
-                    continue
-                if not _row_matches_advanced_filters(
-                        row, docket_type_param, agency, cfr_part_param):
-                    continue
-                h = os_counts_by_id.get(did, {})
-                full_text_rows.append({
-                    **row,
-                    "match_source": "full_text",
-                    "document_match_count": h.get("document_match_count", 0),
-                    "comment_match_count": h.get("comment_match_count", 0),
-                })
+        for did in docket_ids:
+            row = by_id.get(did)
+            if row is None:
+                continue
+            if not _row_matches_advanced_filters(row, docket_type_param, agency, cfr_part_param,
+                                                 start_date, end_date):
+                continue
+            h = os_counts_by_id.get(did, {})
+            full_text_rows.append({
+                **row,
+                "match_source": "full_text",
+                "document_match_count": h.get("document_match_count", 0),
+                "comment_match_count": h.get("comment_match_count", 0),
+            })
+        return full_text_rows
 
-        all_results = title_rows + full_text_rows
+    def _add_totals_and_scores(self, rows):
+        """Add document/comment totals and correlation scores to rows."""
+        docket_ids = [_row_docket_key(r) for r in rows]
+        totals_map = self.db_layer.get_docket_document_comment_totals(docket_ids)
 
-        # Attach denominators for every returned docket card
-        docket_ids_all = [_row_docket_key(r) for r in all_results]
-        totals_map = self.db_layer.get_docket_document_comment_totals(docket_ids_all)
-        for row in all_results:
+        for row in rows:
             did = _row_docket_key(row)
             totals = totals_map.get(did, {})
             row["document_total_count"] = totals.get("document_total_count", 0)
             row["comment_total_count"] = totals.get("comment_total_count", 0)
             row["correlation_score"] = _correlation_score(row)
 
-        # Rank by correlation score, then by raw match counts.
-        all_results.sort(
+    def _sort_results(self, rows):
+        """Sort results by correlation score and match counts."""
+        rows.sort(
             key=lambda r: (
                 r.get("correlation_score", 0.0),
                 int(r.get("document_match_count", 0)) + int(r.get("comment_match_count", 0)),
@@ -211,6 +272,8 @@ class InternalLogic:  # pylint: disable=too-few-public-methods
             reverse=True
         )
 
+    def _paginate_results(self, all_results, page, page_size): # pylint: disable=too-many-locals
+        """Apply pagination and transform results for API response."""
         total_results = len(all_results)
         total_pages = (total_results + page_size - 1) // page_size
 
@@ -218,11 +281,13 @@ class InternalLogic:  # pylint: disable=too-few-public-methods
         end_idx = start_idx + page_size
 
         page_results = all_results[start_idx:end_idx]
+
+        # Sanitize and transform results
         for result in page_results:
             _sanitize_search_row_for_json(result)
             _transform_cfr_refs(result)
 
-        # Rename internal keys to user-facing numerator/denominator names
+        # Rename keys for API
         key_map = {
             "document_match_count": "documentNumerator",
             "comment_match_count": "commentNumerator",
@@ -243,6 +308,64 @@ class InternalLogic:  # pylint: disable=too-few-public-methods
                 "total_pages": total_pages,
                 "has_next": page < total_pages,
                 "has_prev": page > 1
+            }
+        }
+
+    def get_collection_dockets(self, collection_id: int, user_email: str,
+                               page: int = 1, page_size: int = 10) -> dict:
+        # pylint: disable=too-many-locals
+        """
+        Return paginated dockets belonging to a collection owned by the user.
+
+        Args:
+            collection_id: ID of the collection
+            user_email: Email of the requesting user (ownership check)
+            page: Page number (1-indexed)
+            page_size: Number of results per page
+
+        Returns:
+            dict with paginated results and pagination metadata, or None if not found
+        """
+        collections = self.db_layer.get_collections(user_email)
+        collection = next(
+            (c for c in collections if c["collection_id"] == collection_id), None
+        )
+        if collection is None:
+            return None
+
+        docket_ids = collection.get("docket_ids") or []
+        if not docket_ids:
+            return {
+                "results": [],
+                "pagination": {
+                    "page": page,
+                    "page_size": page_size,
+                    "total_results": 0,
+                    "total_pages": 0,
+                    "has_next": False,
+                    "has_prev": False,
+                }
+            }
+
+        all_dockets = self.db_layer.get_dockets_by_ids(docket_ids)
+        for result in all_dockets:
+            _sanitize_search_row_for_json(result)
+            _transform_cfr_refs(result)
+
+        total_results = len(all_dockets)
+        total_pages = max((total_results + page_size - 1) // page_size, 1)
+        start_idx = (page - 1) * page_size
+        end_idx = start_idx + page_size
+
+        return {
+            "results": all_dockets[start_idx:end_idx],
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total_results": total_results,
+                "total_pages": total_pages,
+                "has_next": page < total_pages,
+                "has_prev": page > 1,
             }
         }
 

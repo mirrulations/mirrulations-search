@@ -94,7 +94,7 @@ def _opensearch_comment_id_terms_size() -> int:
 
 
 @dataclass(frozen=True)
-class DBLayer:
+class DBLayer:  # pylint: disable=too-many-public-methods
     conn: Any = None
 
     def search( # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-branches,too-many-statements
@@ -642,6 +642,92 @@ class DBLayer:
             cur.execute(delete_sql, (collection_id, docket_id))
         self.conn.commit()
         return True
+
+    def create_download_job(  # pylint: disable=too-many-locals
+            self,
+            user_email: str,
+            docket_ids: List[str],
+            format: str = "zip",  # pylint: disable=redefined-builtin
+            include_binaries: bool = False,
+    ) -> str:
+        """Create a download job and return the new job_id (UUID string)."""
+        if self.conn is None:
+            return ""
+        upsert_user_sql = """
+            INSERT INTO users (email, name) VALUES (%s, %s)
+            ON CONFLICT (email) DO NOTHING
+        """
+        with self.conn.cursor() as cur:
+            cur.execute(upsert_user_sql, (user_email, user_email))
+        insert_sql = """
+            INSERT INTO download_jobs
+                (user_email, docket_ids, format, include_binaries)
+            VALUES (%s, %s, %s, %s)
+            RETURNING job_id
+        """
+        with self.conn.cursor() as cur:
+            cur.execute(insert_sql, (user_email, docket_ids, format, include_binaries))
+            job_id = str(cur.fetchone()[0])
+        self.conn.commit()
+        return job_id
+
+    def get_download_job(self, job_id: str, user_email: str) -> Dict[str, Any]:
+        """Return job details for the given job_id owned by user_email, or {}."""
+        if self.conn is None:
+            return {}
+        sql = """
+            SELECT job_id, user_email, docket_ids, format, include_binaries,
+                   status, s3_path, created_at, updated_at, expires_at
+            FROM download_jobs
+            WHERE job_id = %s AND user_email = %s
+        """
+        with self.conn.cursor() as cur:
+            cur.execute(sql, (job_id, user_email))
+            row = cur.fetchone()
+        if row is None:
+            return {}
+        return {
+            "job_id": str(row[0]),
+            "user_email": row[1],
+            "docket_ids": row[2],
+            "format": row[3],
+            "include_binaries": row[4],
+            "status": row[5],
+            "s3_path": row[6],
+            "created_at": row[7],
+            "updated_at": row[8],
+            "expires_at": row[9],
+        }
+
+    def update_download_job_status(
+            self, job_id: str, status: str, s3_path: str = None) -> bool:
+        """Update the status (and optionally s3_path) of a download job.
+
+        Returns True if a row was updated.
+        """
+        if self.conn is None:
+            return False
+        sql = """
+            UPDATE download_jobs
+            SET status = %s, s3_path = %s, updated_at = NOW()
+            WHERE job_id = %s
+        """
+        with self.conn.cursor() as cur:
+            cur.execute(sql, (status, s3_path, job_id))
+            updated = cur.rowcount > 0
+        self.conn.commit()
+        return updated
+
+    def prune_expired_download_jobs(self) -> int:
+        """Delete download_jobs past their expires_at. Returns the number of rows deleted."""
+        if self.conn is None:
+            return 0
+        sql = "DELETE FROM download_jobs WHERE expires_at < NOW()"
+        with self.conn.cursor() as cur:
+            cur.execute(sql)
+            deleted = cur.rowcount
+        self.conn.commit()
+        return deleted
 
 
 def _get_secrets_from_aws() -> Dict[str, str]:

@@ -11,6 +11,7 @@ class MockDBLayer:  # pylint: disable=too-many-public-methods
     def __init__(self):
         self._collections = {}
         self._next_collection_id = 1
+        self._jobs = {}
 
     def _items(self) -> List[Dict[str, Any]]:
         return [
@@ -370,3 +371,26 @@ class MockDBLayer:  # pylint: disable=too-many-public-methods
             totals[did]["comment_total_count"] = len(cids)
 
         return totals
+
+    def create_download_job(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+            self, user_email, docket_ids, data_format, include_binaries):  # pylint: disable=unused-argument
+        """Mock create download job - returns a fake job id"""
+        job_id = f"mock-job-{len(self._jobs) + 1}"
+        self._jobs[job_id] = {
+            "job_id": job_id,
+            "status": "pending",
+            "format": data_format,
+            "docket_ids": docket_ids,
+            "created_at": "2026-04-01T00:00:00",
+            "completed_at": None,
+            "up_to_date": True
+        }
+        return job_id
+
+    def get_download_job(self, job_id, user_email):  # pylint: disable=unused-argument
+        """Mock get download job - returns job or None"""
+        return self._jobs.get(job_id)
+
+    def get_download_s3_url(self, job_id, user_email):  # pylint: disable=unused-argument
+        """Mock get download s3 url - returns None since jobs are pending in mock"""
+        return None

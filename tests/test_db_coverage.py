@@ -1,4 +1,6 @@
 # pylint: disable=redefined-outer-name,protected-access
+import uuid
+from datetime import datetime, timezone
 import pytest
 import mirrsearch.db as db_module
 from mirrsearch.db import DBLayer, _env_flag_true, _parse_positive_int_env
@@ -404,3 +406,186 @@ def test_opensearch_verify_certs_true(monkeypatch):
     db_module.get_opensearch_connection()
     assert captured["verify_certs"] is True
     assert "ssl_assert_hostname" not in captured
+
+
+# --- download job methods ---
+
+def test_create_download_job_no_conn_returns_empty_string():
+    assert DBLayer().create_download_job("user@example.com", ["DOC-001"]) == ""
+
+
+def test_create_download_job_returns_job_id():
+    fake_uuid = uuid.UUID("12345678-1234-5678-1234-567812345678")
+    conn = _TrackingConn(rows_per_call={2: [(fake_uuid,)]})
+    db = DBLayer(conn=conn)
+    result = db.create_download_job("user@example.com", ["DOC-001", "DOC-002"])
+    assert result == str(fake_uuid)
+    assert conn.committed is True
+
+
+def test_create_download_job_upserts_user_first():
+    fake_uuid = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    conn = _TrackingConn(rows_per_call={2: [(fake_uuid,)]})
+    db = DBLayer(conn=conn)
+    db.create_download_job("user@example.com", ["DOC-001"])
+    first_sql = conn.calls[0][0]
+    assert "INSERT INTO users" in first_sql
+    assert "ON CONFLICT" in first_sql
+
+
+def test_create_download_job_inserts_correct_values():
+    fake_uuid = uuid.UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+    conn = _TrackingConn(rows_per_call={2: [(fake_uuid,)]})
+    db = DBLayer(conn=conn)
+    db.create_download_job("user@example.com", ["DOC-001"], format="csv", include_binaries=True)
+    insert_sql, params = conn.calls[1]
+    assert "INSERT INTO download_jobs" in insert_sql
+    assert params == ("user@example.com", ["DOC-001"], "csv", True)
+
+
+def test_create_download_job_defaults():
+    fake_uuid = uuid.UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
+    conn = _TrackingConn(rows_per_call={2: [(fake_uuid,)]})
+    db = DBLayer(conn=conn)
+    db.create_download_job("user@example.com", ["DOC-001"])
+    _, params = conn.calls[1]
+    assert params[2] == "zip"
+    assert params[3] is False
+
+
+def test_get_download_job_no_conn_returns_empty_dict():
+    assert not DBLayer().get_download_job("some-uuid", "user@example.com")
+
+
+def test_get_download_job_not_found_returns_empty_dict():
+    conn = _TrackingConn(rows_per_call={1: []})
+    db = DBLayer(conn=conn)
+    result = db.get_download_job("missing-uuid", "user@example.com")
+    assert not result
+
+
+def test_get_download_job_returns_correct_fields():
+    job_id = uuid.UUID("dddddddd-dddd-dddd-dddd-dddddddddddd")
+    now = datetime.now(timezone.utc)
+    row = (job_id, "user@example.com", ["DOC-001"], "zip", False, "pending", None, now, now, now)
+    conn = _TrackingConn(rows_per_call={1: [row]})
+    db = DBLayer(conn=conn)
+    result = db.get_download_job(str(job_id), "user@example.com")
+    assert result["job_id"] == str(job_id)
+    assert result["user_email"] == "user@example.com"
+    assert result["docket_ids"] == ["DOC-001"]
+    assert result["format"] == "zip"
+    assert result["include_binaries"] is False
+    assert result["status"] == "pending"
+    assert result["s3_path"] is None
+
+
+def test_get_download_job_enforces_user_ownership():
+    conn = _TrackingConn(rows_per_call={1: []})
+    db = DBLayer(conn=conn)
+    result = db.get_download_job("some-uuid", "other@example.com")
+    assert not result
+    sql, params = conn.calls[0]
+    assert "user_email" in sql
+    assert "other@example.com" in params
+
+
+def test_update_download_job_status_no_conn_returns_false():
+    assert DBLayer().update_download_job_status("some-uuid", "complete") is False
+
+
+def test_update_download_job_status_returns_true_when_updated():
+    class RowcountCursor(_FakeCursor):
+        def __init__(self):
+            super().__init__([])
+            self.rowcount = 1
+
+    class RowcountConn:
+        def __init__(self):
+            self.cursor_obj = RowcountCursor()
+            self.committed = False
+
+        def cursor(self):
+            return self.cursor_obj
+
+        def commit(self):
+            self.committed = True
+
+    conn = RowcountConn()
+    db = DBLayer(conn=conn)
+    result = db.update_download_job_status("some-uuid", "complete", s3_path="s3://bucket/file.zip")
+    assert result is True
+    assert conn.committed is True
+
+
+def test_update_download_job_status_returns_false_when_not_found():
+    class RowcountCursor(_FakeCursor):
+        def __init__(self):
+            super().__init__([])
+            self.rowcount = 0
+
+    class RowcountConn:
+        def __init__(self):
+            self.cursor_obj = RowcountCursor()
+            self.committed = False
+
+        def cursor(self):
+            return self.cursor_obj
+
+        def commit(self):
+            self.committed = True
+
+    conn = RowcountConn()
+    db = DBLayer(conn=conn)
+    result = db.update_download_job_status("missing-uuid", "complete")
+    assert result is False
+
+
+def test_update_download_job_status_sets_correct_params():
+    conn = _TrackingConn(rows_per_call={})
+    db = DBLayer(conn=conn)
+    db.update_download_job_status("my-uuid", "processing", s3_path=None)
+    sql, params = conn.calls[0]
+    assert "UPDATE download_jobs" in sql
+    assert "status" in sql
+    assert params[0] == "processing"
+    assert params[1] is None
+    assert params[2] == "my-uuid"
+
+
+def test_prune_expired_download_jobs_no_conn_returns_zero():
+    assert DBLayer().prune_expired_download_jobs() == 0
+
+
+def test_prune_expired_download_jobs_returns_deleted_count():
+    class PruneCursor(_FakeCursor):
+        def __init__(self):
+            super().__init__([])
+            self.rowcount = 5
+
+    class PruneConn:
+        def __init__(self):
+            self.cursor_obj = PruneCursor()
+            self.committed = False
+
+        def cursor(self):
+            return self.cursor_obj
+
+        def commit(self):
+            self.committed = True
+
+    conn = PruneConn()
+    db = DBLayer(conn=conn)
+    result = db.prune_expired_download_jobs()
+    assert result == 5
+    assert conn.committed is True
+
+
+def test_prune_expired_download_jobs_uses_correct_sql():
+    conn = _TrackingConn(rows_per_call={})
+    db = DBLayer(conn=conn)
+    db.prune_expired_download_jobs()
+    sql, _params = conn.calls[0]
+    assert "DELETE FROM download_jobs" in sql
+    assert "expires_at" in sql
+    assert "NOW()" in sql

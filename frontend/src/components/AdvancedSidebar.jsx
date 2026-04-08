@@ -222,6 +222,11 @@ export default function AdvancedSidebar({
     return val;
   };
 
+  const isValidDate = (str) => {
+    const d = new Date(str);
+    return !isNaN(d.getTime());
+  };
+
   const filteredCfrParts = useMemo(() => {
     const rawQuery = cfrSearch.trim();
     if (!rawQuery) return cfrOrder;
@@ -297,8 +302,7 @@ export default function AdvancedSidebar({
 
           {/**Date Section */}
 
-          <section className="section">
-            <h3>Date Range</h3>
+          <CollapsibleSection title="Date Range">
 
             <div className="chipRow">
               <button
@@ -362,9 +366,24 @@ export default function AdvancedSidebar({
               if (isYearOnly) {
                 const endNorm = `${raw.trim()}-12-31`;
                 setYearTo(endNorm);                          // auto-fill To
-                setOnchange([new Date(normalized), new Date(endNorm)]);
-              } else if (normalized && yearTo) {
-                setOnchange([new Date(normalized), new Date(yearTo)]);
+                const [y, m, d] = normalized.split("-").map(Number);
+                const [ey, em, ed] = endNorm.split("-").map(Number);
+                const localStart = new Date(y, m - 1, d);
+                const localEnd = new Date(ey, em - 1, ed);
+                setOnchange([localStart, localEnd]);
+              } 
+              else if (
+                normalized &&
+                yearTo &&
+                isValidDate(normalized) &&
+                isValidDate(yearTo)
+              ) 
+              {
+                const [y, m, d] = normalized.split("-").map(Number);
+                const [ey, em, ed] = yearTo.split("-").map(Number);
+                const localStart = new Date(y, m - 1, d);
+                const localEnd = new Date(ey, em - 1, ed);
+                setOnchange([localStart, localEnd]);
               }
             }}
             placeholder="YYYY or YYYY-MM-DD"
@@ -381,9 +400,24 @@ export default function AdvancedSidebar({
 
               if (isYearOnly) {
                 const startNorm = yearFrom || `${raw.trim()}-01-01`;
-                setOnchange([new Date(startNorm), new Date(normalized)]);
-              } else if (yearFrom && normalized) {
-                setOnchange([new Date(yearFrom), new Date(normalized)]);
+                const [sy, sm, sd] = startNorm.split("-").map(Number);
+                const [ey, em, ed] = normalized.split("-").map(Number);
+                const localStart = new Date(sy, sm - 1, sd);
+                const localEnd = new Date(ey, em - 1, ed);
+                setOnchange([localStart, localEnd]);
+              } 
+              else if (
+                yearFrom &&
+                normalized &&
+                isValidDate(yearFrom) &&
+                isValidDate(normalized)
+              ) 
+              {
+                const [sy, sm, sd] = yearFrom.split("-").map(Number);
+                const [ey, em, ed] = normalized.split("-").map(Number);
+                const localStart = new Date(sy, sm - 1, sd);
+                const localEnd = new Date(ey, em - 1, ed);
+                setOnchange([localStart, localEnd]);
               }
             }}
             placeholder="YYYY or YYYY-MM-DD"
@@ -419,7 +453,7 @@ export default function AdvancedSidebar({
                 value={value}
               />
             </div>
-          </section>
+          </CollapsibleSection>
 
           {/* Agency */}
           <CollapsibleSection title="Agency">

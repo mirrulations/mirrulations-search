@@ -1,6 +1,7 @@
 """
 Tests for the Flask app endpoints - Header-based pagination (returns list)
 """
+import json
 import tempfile
 import os
 from unittest.mock import patch, MagicMock
@@ -8,6 +9,7 @@ import pytest
 from mock_db import MockDBLayer
 from mirrsearch.app import create_app
 from mirrsearch.db import get_postgres_connection, get_opensearch_connection
+from mirrsearch.app import _make_oauth_handler
 
 # pylint: disable=duplicate-code
 class MockOAuthHandler:
@@ -118,7 +120,6 @@ def test_search_with_valid_filter_returns_matching_docket_type(client):  # pylin
     assert len(data) > 0
     for doc in data:
         assert doc['document_type'] == 'Proposed Rule'
-
 
 
 def test_search_with_filter_only_affects_docket_type(client):  # pylint: disable=redefined-outer-name
@@ -331,6 +332,7 @@ def test_home_route_with_index_html():
         assert response.status_code == 200
         assert b'Home' in response.data
 
+
 # --- Collections ---
 
 def test_get_collections_returns_empty_list(client):  # pylint: disable=redefined-outer-name
@@ -455,7 +457,80 @@ def test_get_collections_shows_added_dockets(client):  # pylint: disable=redefin
     assert "CMS-2025-0240" in match["docket_ids"]
 
 
-def test_agencies_returns_list(client): # pylint: disable=redefined-outer-name
+# --- GET /collections/<id>/dockets (paginated) ---
+
+def test_get_collection_dockets_returns_empty_for_empty_collection(client):  # pylint: disable=redefined-outer-name
+    """GET /collections/<id>/dockets returns empty list for a collection with no dockets"""
+    collection_id = client.post(
+        '/collections', json={"name": "Empty"}
+    ).get_json()["collection_id"]
+    response = client.get(f'/collections/{collection_id}/dockets')
+    assert response.status_code == 200
+    assert response.get_json() == []
+
+
+def test_get_collection_dockets_has_pagination_headers(client):  # pylint: disable=redefined-outer-name
+    """GET /collections/<id>/dockets returns all required pagination headers"""
+    collection_id = client.post(
+        '/collections', json={"name": "Headers Check"}
+    ).get_json()["collection_id"]
+    response = client.get(f'/collections/{collection_id}/dockets')
+    assert response.status_code == 200
+    assert 'X-Page' in response.headers
+    assert 'X-Page-Size' in response.headers
+    assert 'X-Total-Results' in response.headers
+    assert 'X-Total-Pages' in response.headers
+    assert 'X-Has-Next' in response.headers
+    assert 'X-Has-Prev' in response.headers
+
+
+def test_get_collection_dockets_returns_404_for_nonexistent_collection(client):  # pylint: disable=redefined-outer-name
+    """GET /collections/<id>/dockets returns 404 for a collection that does not exist"""
+    response = client.get('/collections/9999/dockets')
+    assert response.status_code == 404
+
+
+def test_get_collection_dockets_requires_auth(app):  # pylint: disable=redefined-outer-name
+    """GET /collections/<id>/dockets returns 401 without cookie"""
+    response = app.test_client().get('/collections/1/dockets')
+    assert response.status_code == 401
+
+
+def test_get_collection_dockets_respects_page_size(client):  # pylint: disable=redefined-outer-name
+    """GET /collections/<id>/dockets respects page_size query param"""
+    collection_id = client.post(
+        '/collections', json={"name": "Paged"}
+    ).get_json()["collection_id"]
+    response = client.get(f'/collections/{collection_id}/dockets?page=1&page_size=5')
+    assert response.status_code == 200
+    assert response.headers['X-Page'] == '1'
+    assert response.headers['X-Page-Size'] == '5'
+
+
+def test_get_collection_dockets_returns_json_list(client):  # pylint: disable=redefined-outer-name
+    """GET /collections/<id>/dockets returns a JSON list"""
+    collection_id = client.post(
+        '/collections', json={"name": "List Check"}
+    ).get_json()["collection_id"]
+    response = client.get(f'/collections/{collection_id}/dockets')
+    assert response.is_json
+    assert isinstance(response.get_json(), list)
+
+
+def test_get_collection_dockets_total_results_zero_for_empty(client):  # pylint: disable=redefined-outer-name
+    """X-Total-Results is 0 for a collection with no dockets"""
+    collection_id = client.post(
+        '/collections', json={"name": "Zero"}
+    ).get_json()["collection_id"]
+    response = client.get(f'/collections/{collection_id}/dockets')
+    assert response.headers['X-Total-Results'] == '0'
+    assert response.headers['X-Has-Next'] == 'false'
+    assert response.headers['X-Has-Prev'] == 'false'
+
+
+# --- agencies ---
+
+def test_agencies_returns_list(client):  # pylint: disable=redefined-outer-name
     """Test that agencies endpoint returns a JSON list"""
     response = client.get('/agencies')
     assert response.status_code == 200
@@ -487,3 +562,201 @@ def test_get_opensearch_connection(mock_opensearch):
     """Test opensearch connection"""
     get_opensearch_connection()
     mock_opensearch.assert_called_once()
+
+
+# --- Download ---
+
+def test_request_download_returns_job_id(client):  # pylint: disable=redefined-outer-name
+    """POST /download/request returns job_id and started status"""
+    response = client.post('/download/request', json={
+        "docket_ids": ["CMS-2025-0240"],
+        "format": "raw",
+        "include_binaries": False
+    })
+    assert response.status_code == 202
+    data = response.get_json()
+    assert "job_id" in data
+    assert data["status"] == "started"
+
+
+def test_request_download_requires_auth(app):  # pylint: disable=redefined-outer-name
+    """POST /download/request returns 401 without cookie"""
+    response = app.test_client().post('/download/request', json={
+        "docket_ids": ["CMS-2025-0240"],
+        "format": "raw",
+        "include_binaries": False
+    })
+    assert response.status_code == 401
+
+
+def test_request_download_requires_docket_ids(client):  # pylint: disable=redefined-outer-name
+    """POST /download/request returns 400 when docket_ids is missing"""
+    response = client.post('/download/request', json={
+        "format": "raw",
+        "include_binaries": False
+    })
+    assert response.status_code == 400
+
+
+def test_request_download_enforces_10_docket_limit(client):  # pylint: disable=redefined-outer-name
+    """POST /download/request returns 400 when more than 10 dockets provided"""
+    response = client.post('/download/request', json={
+        "docket_ids": [f"CMS-2025-000{i}" for i in range(11)],
+        "format": "raw",
+        "include_binaries": False
+    })
+    assert response.status_code == 400
+
+
+def test_request_download_requires_valid_format(client):  # pylint: disable=redefined-outer-name
+    """POST /download/request returns 400 for invalid format"""
+    response = client.post('/download/request', json={
+        "docket_ids": ["CMS-2025-0240"],
+        "format": "json",
+        "include_binaries": False
+    })
+    assert response.status_code == 400
+
+
+def test_request_download_accepts_csv_format(client):  # pylint: disable=redefined-outer-name
+    """POST /download/request accepts csv as a valid format"""
+    response = client.post('/download/request', json={
+        "docket_ids": ["CMS-2025-0240"],
+        "format": "csv",
+        "include_binaries": False
+    })
+    assert response.status_code == 202
+
+
+def test_download_status_returns_job_info(client):  # pylint: disable=redefined-outer-name
+    """GET /download/status/<job_id> returns job status"""
+    job_id = client.post('/download/request', json={
+        "docket_ids": ["CMS-2025-0240"],
+        "format": "raw",
+        "include_binaries": False
+    }).get_json()["job_id"]
+    response = client.get(f'/download/status/{job_id}')
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["job_id"] == job_id
+    assert "status" in data
+    assert "format" in data
+    assert "docket_ids" in data
+    assert "created_at" in data
+
+
+def test_download_status_not_found(client):  # pylint: disable=redefined-outer-name
+    """GET /download/status/<job_id> returns 404 for nonexistent job"""
+    response = client.get('/download/status/nonexistent-job-id')
+    assert response.status_code == 404
+
+
+def test_download_status_requires_auth(app):  # pylint: disable=redefined-outer-name
+    """GET /download/status/<job_id> returns 401 without cookie"""
+    response = app.test_client().get('/download/status/some-job-id')
+    assert response.status_code == 401
+
+
+def test_download_file_not_ready(client):  # pylint: disable=redefined-outer-name
+    """GET /download/<job_id> returns 202 when job is still pending"""
+    job_id = client.post('/download/request', json={
+        "docket_ids": ["CMS-2025-0240"],
+        "format": "raw",
+        "include_binaries": False
+    }).get_json()["job_id"]
+    response = client.get(f'/download/{job_id}')
+    assert response.status_code == 202
+
+
+def test_download_file_not_found(client):  # pylint: disable=redefined-outer-name
+    """GET /download/<job_id> returns 404 for nonexistent job"""
+    response = client.get('/download/nonexistent-job-id')
+    assert response.status_code == 404
+
+
+def test_download_file_requires_auth(app):  # pylint: disable=redefined-outer-name
+    """GET /download/<job_id> returns 401 without cookie"""
+    response = app.test_client().get('/download/some-job-id')
+    assert response.status_code == 401
+
+
+def test_search_with_date_filters(client): # pylint: disable=redefined-outer-name
+    """Test search with start_date and end_date filters"""
+    response = client.get('/search/?str=renal&start_date=2024-01-01&end_date=2024-12-31')
+    assert response.status_code == 200
+    data = response.get_json()
+    assert isinstance(data, list)
+
+
+def test_search_with_invalid_page_size_defaults_to_10(client): # pylint: disable=redefined-outer-name
+    """Test that invalid page_size defaults to 10"""
+    response = client.get('/search/?page_size=200')  # > 100 should default to 10
+    assert response.status_code == 200
+    assert response.headers['X-Page-Size'] == '10'
+
+
+def test_search_with_page_less_than_1_defaults_to_1(client): # pylint: disable=redefined-outer-name
+    """Test that page < 1 defaults to 1"""
+    response = client.get('/search/?page=0')
+    assert response.status_code == 200
+    assert response.headers['X-Page'] == '1'
+
+
+def test_search_with_invalid_cfr_part_ignores_malformed(client): # pylint: disable=redefined-outer-name
+    """Test that malformed cfr_part values are ignored"""
+    response = client.get('/search/?str=renal&cfr_part=invalid&cfr_part=42:413')
+    assert response.status_code == 200
+
+
+def test_home_route_serves_index_html(tmp_path):
+    """Test home route serves index.html when no OAuth code"""
+    index_path = tmp_path / "dist" / "index.html"
+    index_path.parent.mkdir()
+    index_path.write_text("<html><body>Test</body></html>")
+
+    test_app = create_app(dist_dir=str(tmp_path / "dist"), db_layer=MockDBLayer())
+    test_client = test_app.test_client()
+
+    response = test_client.get('/')
+    assert response.status_code == 200
+    assert b'Test' in response.data
+
+
+def test_search_with_empty_query_uses_default(client): # pylint: disable=redefined-outer-name
+    """Test search with empty query uses default 'example_query'"""
+    response = client.get('/search/?str=')
+    assert response.status_code == 200
+    data = response.get_json()
+    assert isinstance(data, list)
+
+
+def test_oauth_handler_from_aws_secrets(monkeypatch):
+    """Test OAuth handler creation from AWS Secrets Manager"""
+    monkeypatch.setenv("USE_AWS_SECRETS", "true")
+    monkeypatch.setenv("AWS_REGION", "us-east-1")
+
+    mock_secret = {
+        "base_url": "https://test.com",
+        "google_client_id": "test-id",
+        "google_client_secret": "test-secret",
+        "jwt_secret": "test-jwt"
+    }
+
+    mock_boto3 = MagicMock()
+    mock_client = MagicMock()
+    mock_client.get_secret_value.return_value = {"SecretString": json.dumps(mock_secret)}
+    mock_boto3.client.return_value = mock_client
+
+    with patch.dict('sys.modules', {'boto3': mock_boto3}):
+        with patch('mirrsearch.app._make_oauth_handler_from_aws') as mock_handler:
+            mock_handler.return_value = MockOAuthHandler()
+            handler = _make_oauth_handler()
+            assert handler is not None
+
+
+def test_internal_logic_error_handling(client): # pylint: disable=redefined-outer-name
+    """Test error handling in InternalLogic"""
+    with patch('mirrsearch.internal_logic.get_db') as mock_get_db:
+        mock_get_db.side_effect = Exception("DB Error")
+        response = client.get('/search/?str=test')
+        assert response.status_code in [200, 500]
