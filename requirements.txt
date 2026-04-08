@@ -15,3 +15,5 @@ certbot
 python-dotenv
 boto3>=1.28.0,<2.0.0
 urllib3>=1.25.4,<2.0.0
+redis
+rq

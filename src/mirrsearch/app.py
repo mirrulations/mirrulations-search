@@ -6,6 +6,7 @@ from mirrsearch.internal_logic import InternalLogic, _transform_cfr_refs
 from mirrsearch.oauth_handler import OAuthHandler, OAuthCodeError, OAuthVerificationError
 from mirrsearch.oauth_handler import TokenExpiredError, TokenInvalidError
 from mirrsearch.db import get_db
+from mirrsearch.download_task import enqueue_package_dockets, generate_presigned_url
 
 
 def _get_search_params():
@@ -259,68 +260,70 @@ def create_app(dist_dir=None, db_layer=None, oauth_handler=None):  # pylint: dis
         return "", 204
 
     @flask_app.route("/download/request", methods=["POST"])
-    def request_download(): # pylint: disable=too-many-return-statements
+    def request_download():
         handler = oauth_handler or _make_oauth_handler()
         user = _get_user_from_cookie(handler)
         if not user:
             return jsonify({"error": "Unauthorized"}), 401
-
+ 
         body = request.get_json(silent=True) or {}
         docket_ids = body.get("docket_ids") or []
         data_format = (body.get("format") or "").strip().lower()
-        include_binaries = bool(body.get("include_binaries", False))
-
+ 
         if not docket_ids:
             return jsonify({"error": "docket_ids is required"}), 400
         if len(docket_ids) > 10:
             return jsonify({"error": "Maximum of 10 dockets per download"}), 400
         if data_format not in ("raw", "csv"):
             return jsonify({"error": "format must be 'raw' or 'csv'"}), 400
-
+ 
+        # Create the job record in the DB (status starts as 'pending')
         job_id = db_layer.create_download_job(
-            user["email"], docket_ids, data_format, include_binaries
-        )
-        return jsonify({"job_id": job_id, "status": "started"}), 202
+            user["email"], docket_ids, data_format)
+ 
+        # Hand off to RQ worker — this returns immediately
+        enqueue_package_dockets(job_id, docket_ids, data_format)
+ 
+        return jsonify({"job_id": job_id, "status": "pending"}), 202
 
     @flask_app.route("/download/status/<job_id>", methods=["GET"])
-    def download_status(job_id): # pylint: disable=too-many-return-statements
+    def download_status(job_id):
         handler = oauth_handler or _make_oauth_handler()
         user = _get_user_from_cookie(handler)
         if not user:
             return jsonify({"error": "Unauthorized"}), 401
-
+ 
         job = db_layer.get_download_job(job_id, user["email"])
         if not job:
             return jsonify({"error": "Job not found"}), 404
-
+ 
         return jsonify({
             "job_id": job_id,
-            "status": job["status"],
+            "status": job["status"],           # pending | started | complete | failed
             "format": job["format"],
             "docket_ids": job["docket_ids"],
-            "created_at": job["created_at"],
-            "completed_at": job.get("completed_at"),
-            "up_to_date": job.get("up_to_date", True)
+            "created_at": job["created_at"].isoformat() if job["created_at"] else None,
+            "expires_at": job["expires_at"].isoformat() if job["expires_at"] else None,
         })
 
     @flask_app.route("/download/<job_id>", methods=["GET"])
-    def download_file(job_id): # pylint: disable=too-many-return-statements
+    def download_file(job_id):
         handler = oauth_handler or _make_oauth_handler()
         user = _get_user_from_cookie(handler)
         if not user:
             return jsonify({"error": "Unauthorized"}), 401
-
+ 
         job = db_layer.get_download_job(job_id, user["email"])
         if not job:
             return jsonify({"error": "Job not found"}), 404
-        if job["status"] != "ready":
-            return jsonify({"error": "Download not ready yet"}), 202
-
-        s3_url = db_layer.get_download_s3_url(job_id, user["email"])
-        if not s3_url:
+        if job["status"] != "complete":                      # matches what worker sets
+            return jsonify({"error": "Download not ready yet", "status": job["status"]}), 202
+        if not job.get("s3_path"):
             return jsonify({"error": "Download file not found"}), 404
-
-        return redirect(s3_url)
+ 
+        # Generate a short-lived presigned URL so the user downloads directly from S3
+        presigned_url = generate_presigned_url(job["s3_path"])
+        return redirect(presigned_url)
 
     @flask_app.route("/dockets", methods=["GET"])
     def get_dockets_by_ids():
