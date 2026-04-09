@@ -61,7 +61,7 @@ else
 fi
 
 # Build the React frontend
-(cd frontend && npm install && npm run build)
+(cd frontend && npm ci --no-audit --no-fund && npm run build)
 
 # Load .env variables
 [[ -f .env ]] && source .env

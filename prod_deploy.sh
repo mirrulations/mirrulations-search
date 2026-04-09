@@ -124,7 +124,7 @@ if [ ! -d ".venv" ]; then
     ./.venv/bin/pip install -r requirements.txt
 fi
 
-(cd frontend && npm install && npm run build)
+(cd frontend && npm ci --no-audit --no-fund && npm run build)
 
 sudo ln -sf "${PROJECT_ROOT}/.venv/bin/certbot" /usr/bin/certbot
 

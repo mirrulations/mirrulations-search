@@ -4,7 +4,9 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
     plugins: [react()],
     build: {
-        // Skips gzip-size step; which should save more time on small/CI/EC2 stuff
+        // Fewer downlevel transforms than default; modern browsers / internal app
+        target: 'es2022',
+        // Skips gzip-size step — saves time on small EC2
         reportCompressedSize: false,
         sourcemap: false,
     },

@@ -16,7 +16,7 @@ gunicorn.pid
 node_modules/
 frontend/node_modules/
 package-lock.json
-frontend/package-lock.json
+# Track frontend/package-lock.json for fast `npm ci` on EC2
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
