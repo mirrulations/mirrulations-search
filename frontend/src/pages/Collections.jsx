@@ -1,5 +1,9 @@
+<<<<<<< HEAD
+import { useEffect, useMemo, useState } from "react";
+=======
 import { useEffect, useState, useRef,useMemo } from "react";
 
+>>>>>>> a05f40103aad1f956b6774f0e6ef28c24448d3c4
 import {
   getCollections,
   createCollection,
@@ -26,6 +30,15 @@ export default function Collections() {
   const [editMode, setEditMode] = useState(false);
   const [error, setError] = useState("");
   const [unauthorized, setUnauthorized] = useState(false);
+<<<<<<< HEAD
+  const [docketDetails, setDocketDetails] = useState({});
+  const [docketSearch, setDocketSearch] = useState("");
+
+  const selectedCollection = collections.find(
+    (collection) => collection.collection_id === selectedCollectionId
+  );
+  const selectedDocketIds = selectedCollection?.docket_ids || [];
+=======
   const [dockets, setDockets] = useState([]);
   const [pagination, setPagination] = useState(null);
   const [page, setPage] = useState(1);
@@ -34,6 +47,7 @@ export default function Collections() {
   const [sortMode, setSortMode] = useState(SORT_MODIFIED);
   const [sortMenuOpen, setSortMenuOpen] = useState(false);
   const sortMenuRef = useRef(null);
+>>>>>>> a05f40103aad1f956b6774f0e6ef28c24448d3c4
 
   useEffect(() => {
     function handlePointerDown(e) {
@@ -104,6 +118,10 @@ export default function Collections() {
   }, [selectedCollectionId]);
 
   useEffect(() => {
+<<<<<<< HEAD
+    setDocketSearch("");
+  }, [selectedCollectionId]);
+=======
     if (!selectedCollectionId) return;
     loadDockets(selectedCollectionId, page, sortMode);
   }, [page]);
@@ -113,6 +131,7 @@ export default function Collections() {
     setPage(1);
     loadDockets(selectedCollectionId, 1, sortMode);
   }, [sortMode]);
+>>>>>>> a05f40103aad1f956b6774f0e6ef28c24448d3c4
 
   const handleCreate = async (e) => {
     e.preventDefault();
@@ -183,12 +202,33 @@ export default function Collections() {
     );
   }
 
+<<<<<<< HEAD
+  const filteredDocketIds = useMemo(() => {
+    const query = docketSearch.trim().toLowerCase();
+    if (!query) return selectedDocketIds;
+
+    return selectedDocketIds.filter((docketId) => {
+      const item = docketDetails[docketId];
+      if (!item) {
+        return docketId.toLowerCase().includes(query);
+      }
+
+      return [
+        item.docket_id,
+        item.docket_title,
+        item.agency_id,
+        item.docket_type,
+      ].some((value) => (value || "").toLowerCase().includes(query));
+    });
+  }, [docketDetails, docketSearch, selectedDocketIds]);
+=======
   const selectedCollection = collections.find(
     (collection) => collection.collection_id === selectedCollectionId
   );
   const selectedDocketIds = selectedCollection?.docket_ids || [];
   const overLimit = selectedDocketIds.length > MAX_DOCKETS;
   const sortLabel = sortMode === SORT_ALPHABETICAL ? "Alphabetical" : "Last modified";
+>>>>>>> a05f40103aad1f956b6774f0e6ef28c24448d3c4
 
   const handleDownloadAll = () => {
     if (!selectedCollection || overLimit) return;
@@ -284,6 +324,10 @@ export default function Collections() {
             <h1 className="collections-title">{selectedCollection.name}</h1>
             <div className="collections-toolbar">
               <p className="collections-summary">
+<<<<<<< HEAD
+                Showing dockets in "{selectedCollection.name}" • {filteredDocketIds.length}{" "}
+                docket{filteredDocketIds.length === 1 ? "" : "s"} found
+=======
                 Showing dockets in "{selectedCollection.name}" • {pagination?.totalResults ?? 0}{" "}
                 docket{(pagination?.totalResults ?? 0) === 1 ? "" : "s"} found
                 {overLimit && (
@@ -291,6 +335,7 @@ export default function Collections() {
                     · Limit of {MAX_DOCKETS} reached — remove dockets to download
                   </span>
                 )}
+>>>>>>> a05f40103aad1f956b6774f0e6ef28c24448d3c4
               </p>
               <div className="collections-toolbar-right">
                 <div className="collections-sort-wrap" ref={sortMenuRef}>
@@ -372,11 +417,66 @@ export default function Collections() {
               </div>
             </div>
 
+<<<<<<< HEAD
+            {selectedDocketIds.length > 0 && (
+              <div className="collections-docket-search-wrap">
+                <input
+                  type="text"
+                  className="collections-docket-search"
+                  placeholder="Search this collection's dockets..."
+                  value={docketSearch}
+                  onChange={(e) => setDocketSearch(e.target.value)}
+                />
+              </div>
+            )}
+
+            {selectedDocketIds.length === 0 ? (
+=======
             {docketsLoading ? (
               <p className="collections-muted">Loading dockets...</p>
             ) : dockets.length === 0 ? (
+>>>>>>> a05f40103aad1f956b6774f0e6ef28c24448d3c4
               <p className="collections-muted">No dockets in this collection.</p>
+            ) : filteredDocketIds.length === 0 ? (
+              <p className="collections-muted">
+                No dockets in this collection match "{docketSearch}".
+              </p>
             ) : (
+<<<<<<< HEAD
+              <div className="collection-results">
+                {filteredDocketIds.map((docketId) => {
+                  const item = docketDetails[docketId];
+                  if (!item) return <div key={docketId} className="result-card"><p>Loading...</p></div>;
+                  return (
+                      <article key={docketId} className="result-card">
+                          <h3 className="result-title">{item.docket_title}</h3>
+                          <div className="result-meta">
+                              <p><strong>Agency:</strong> {item.agency_id}</p>
+                              <p><strong>Docket-ID:</strong> {item.docket_id}</p>
+                              <p><strong>Docket type:</strong> {item.docket_type}</p>
+                              <p>
+                                  <strong>CFR:</strong>{" "}
+                                  {item.cfrPart && item.cfrPart.length > 0 ? (
+                                      item.cfrPart.map((p, idx) => (
+                                          <span key={idx}>
+                                              <a href={p.link} target="_blank" rel="noopener noreferrer">
+                                                  {p.title != null ? `${p.title} Part ${p.part}` : p.part}
+                                              </a>
+                                              {idx < item.cfrPart.length - 1 && ", "}
+                                          </span>
+                                      ))
+                                  ) : (
+                                      <a href={ECFR_URL} target="_blank" rel="noopener noreferrer">None</a>
+                                  )}
+                              </p>
+                              <p><strong>Last modified date:</strong> {item.modify_date}</p>
+                          </div>
+                          {editMode && (
+                              <button className="collection-remove-docket"
+                                  onClick={() => handleRemoveDocket(selectedCollection.collection_id, docketId)}>
+                                  Remove from Collection
+                              </button>
+=======
               <>
                 <div className="collection-results">
                   {sortedDockets.map((item) => (
@@ -399,6 +499,7 @@ export default function Collections() {
                             ))
                           ) : (
                             <a href={ECFR_URL} target="_blank" rel="noopener noreferrer">None</a>
+>>>>>>> a05f40103aad1f956b6774f0e6ef28c24448d3c4
                           )}
                         </p>
                         <p><strong>Last modified date:</strong> {item.modify_date}</p>
