@@ -111,13 +111,6 @@ export default function App() {
     }
   };
 
-  const advancedPayload = {
-    yearFrom,
-    yearTo,
-    agencies: Array.from(selectedAgencies),
-    status: Array.from(status),
-  };
-
   const clearAdvanced = () => {
     setYearFrom("");
     setYearTo("");
@@ -260,7 +253,6 @@ export default function App() {
                     </select>
                   </div>
                   <ResultsPanel
-                    advancedPayload={advancedPayload}
                     results={results}
                     loading={loading}
                     hasSearched={hasSearched}

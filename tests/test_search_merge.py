@@ -284,3 +284,64 @@ def test_get_collection_dockets_non_empty_sanitizes_and_paginates():
     assert "cfrPart" in out["results"][0]
     assert out["results"][0]["documentDenominator"] == 5
     assert out["results"][0]["commentDenominator"] == 3
+
+
+class _FakeDbCommentSortTie:  # pylint: disable=too-few-public-methods
+    """Two dockets with same comment_total_count; sort by comment_match_count next."""
+
+    def search(self, query, *args, **kwargs):  # pylint: disable=unused-argument
+        # Intentionally FAA first in SQL merge order — sort must reorder.
+        return [
+            {"docket_id": "FAA-2025-0618", "docket_title": "F", "cfr_refs": []},
+            {"docket_id": "CMS-2025-0240", "docket_title": "C", "cfr_refs": []},
+        ]
+
+    def text_match_terms(self, terms, opensearch_client=None):  # pylint: disable=unused-argument
+        return [
+            {"docket_id": "FAA-2025-0618", "document_match_count": 0, "comment_match_count": 3},
+            {"docket_id": "CMS-2025-0240", "document_match_count": 0, "comment_match_count": 6},
+        ]
+
+    def get_dockets_by_ids(self, docket_ids):  # pylint: disable=unused-argument
+        return []
+
+    def get_docket_document_comment_totals(self, docket_ids, opensearch_client=None):  # pylint: disable=unused-argument
+        return {
+            "FAA-2025-0618": {"document_total_count": 5, "comment_total_count": 6},
+            "CMS-2025-0240": {"document_total_count": 3, "comment_total_count": 6},
+        }
+
+
+def test_search_sort_comment_count_breaks_ties_by_match_count():
+    logic = InternalLogic("x", db_layer=_FakeDbCommentSortTie())
+    out = logic.search("a", sort_by="comment_count", page=1, page_size=10)
+    assert [r["docket_id"] for r in out["results"]] == ["CMS-2025-0240", "FAA-2025-0618"]
+
+
+class _FakeDbDocumentSortTie:  # pylint: disable=too-few-public-methods
+    def search(self, query, *args, **kwargs):  # pylint: disable=unused-argument
+        return [
+            {"docket_id": "B", "docket_title": "b", "cfr_refs": []},
+            {"docket_id": "A", "docket_title": "a", "cfr_refs": []},
+        ]
+
+    def text_match_terms(self, terms, opensearch_client=None):  # pylint: disable=unused-argument
+        return [
+            {"docket_id": "B", "document_match_count": 1, "comment_match_count": 0},
+            {"docket_id": "A", "document_match_count": 5, "comment_match_count": 0},
+        ]
+
+    def get_dockets_by_ids(self, docket_ids):  # pylint: disable=unused-argument
+        return []
+
+    def get_docket_document_comment_totals(self, docket_ids, opensearch_client=None):  # pylint: disable=unused-argument
+        return {
+            "A": {"document_total_count": 10, "comment_total_count": 0},
+            "B": {"document_total_count": 10, "comment_total_count": 0},
+        }
+
+
+def test_search_sort_document_count_breaks_ties_by_match_count():
+    logic = InternalLogic("x", db_layer=_FakeDbDocumentSortTie())
+    out = logic.search("q", sort_by="document_count", page=1, page_size=10)
+    assert [r["docket_id"] for r in out["results"]] == ["A", "B"]
