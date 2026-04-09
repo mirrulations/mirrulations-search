@@ -5,6 +5,8 @@ Only tests DBLayer wiring, the postgres branch, and module-level
 factory functions. Dummy-data behavior tests live in test_mock.py.
 """
 # pylint: disable=redefined-outer-name,protected-access
+import uuid
+
 import pytest
 import mirrsearch.db as db_module
 from mirrsearch.db import DBLayer, cfr_part_filter_patterns, get_db
@@ -856,3 +858,63 @@ def test_text_match_terms_malformed_response_returns_empty():
 
     db = DBLayer()
     assert db.text_match_terms(["x"], opensearch_client=BadClient()) == []
+
+
+def test_get_docket_document_comment_totals_os_merge():
+    """documents_text + comments indices populate denominators when RDS is absent."""
+
+    class _Os:  # pylint: disable=too-few-public-methods
+        def search(self, index, body):  # pylint: disable=unused-argument
+            if index == "documents_text":
+                return {
+                    "aggregations": {
+                        "by_docket": {
+                            "buckets": [{"key": "D1", "doc_count": 3}],
+                        }
+                    }
+                }
+            if index == "comments":
+                return {
+                    "aggregations": {
+                        "by_docket": {
+                            "buckets": [{"key": "D1", "doc_count": 4}],
+                        }
+                    }
+                }
+            return {"aggregations": {"by_docket": {"buckets": []}}}
+
+    db = DBLayer()
+    out = db.get_docket_document_comment_totals(["D1"], opensearch_client=_Os())
+    assert out["D1"]["document_total_count"] == 3
+    assert out["D1"]["comment_total_count"] == 4
+
+
+def test_get_docket_document_comment_totals_normalizes_uuid_and_max_docs():
+    """Postgres may return UUID row keys; str keys must match lookups. max(RDS, OS docs)."""
+    did = uuid.UUID("12345678-1234-5678-1234-567812345678")
+    did_str = str(did)
+
+    class _Os:  # pylint: disable=too-few-public-methods
+        def search(self, index, body):  # pylint: disable=unused-argument
+            if index == "documents_text":
+                return {
+                    "aggregations": {
+                        "by_docket": {
+                            "buckets": [{"key": did_str, "doc_count": 5}],
+                        }
+                    }
+                }
+            if index == "comments":
+                return {
+                    "aggregations": {
+                        "by_docket": {
+                            "buckets": [{"key": did_str, "doc_count": 9}],
+                        }
+                    }
+                }
+            return {"aggregations": {"by_docket": {"buckets": []}}}
+
+    db = DBLayer(conn=_FakeConn([(did, 2)]))
+    out = db.get_docket_document_comment_totals([did_str], opensearch_client=_Os())
+    assert out[did_str]["document_total_count"] == 5
+    assert out[did_str]["comment_total_count"] == 9

@@ -451,28 +451,68 @@ class DBLayer:  # pylint: disable=too-many-public-methods
 
     def _fetch_docket_totals(  # pylint: disable=too-many-locals
             self, opensearch_client, docket_ids: List[str]) -> Dict[str, Dict[str, int]]:
-        """Document totals from RDS, comment totals from OpenSearch."""
+        """Document totals from RDS (and documents_text as fallback), comments from OpenSearch."""
+        docket_ids_str = [str(d) for d in docket_ids]
         totals: Dict[str, Dict[str, int]] = {}
         if self.conn is not None:
             with self.conn.cursor() as cur:
                 cur.execute(
                     "SELECT docket_id, COUNT(*) FROM documentsWithFRdoc "
                     "WHERE docket_id = ANY(%s) GROUP BY docket_id",
-                    (list(docket_ids),)
+                    (docket_ids_str,)
                 )
                 for docket_id, count in cur.fetchall():
-                    totals[docket_id] = {"document_total_count": count, "comment_total_count": 0}
+                    did = str(docket_id)
+                    totals[did] = {
+                        "document_total_count": int(count),
+                        "comment_total_count": 0,
+                    }
+        terms_filter = {"terms": {"docketId.keyword": docket_ids_str}}
+        doc_text_query = {
+            "size": 0,
+            "query": {"bool": {"filter": [terms_filter]}},
+            "aggs": {
+                "by_docket": {
+                    "terms": {
+                        "field": "docketId.keyword",
+                        "size": len(docket_ids_str),
+                    }
+                }
+            },
+        }
+        try:
+            resp = opensearch_client.search(index="documents_text", body=doc_text_query)
+            for bucket in resp["aggregations"]["by_docket"]["buckets"]:
+                did = str(bucket["key"])
+                os_docs = int(bucket["doc_count"])
+                totals.setdefault(
+                    did, {"document_total_count": 0, "comment_total_count": 0}
+                )
+                rds_docs = totals[did]["document_total_count"]
+                # Prefer max so sort uses FR counts when present, else indexed text docs.
+                totals[did]["document_total_count"] = max(rds_docs, os_docs)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            print(f"Document text index totals query failed: {e}")
         comment_query = {
             "size": 0,
-            "query": {"bool": {"filter": [{"terms": {"docketId.keyword": docket_ids}}]}},
-            "aggs": {"by_docket": {"terms": {"field": "docketId.keyword", "size": len(docket_ids)}}}
+            "query": {"bool": {"filter": [terms_filter]}},
+            "aggs": {
+                "by_docket": {
+                    "terms": {
+                        "field": "docketId.keyword",
+                        "size": len(docket_ids_str),
+                    }
+                }
+            },
         }
         try:
             resp = opensearch_client.search(index="comments", body=comment_query)
             for bucket in resp["aggregations"]["by_docket"]["buckets"]:
-                docket_id = str(bucket["key"])
-                totals.setdefault(docket_id, {"document_total_count": 0, "comment_total_count": 0})
-                totals[docket_id]["comment_total_count"] = bucket["doc_count"]
+                did = str(bucket["key"])
+                totals.setdefault(
+                    did, {"document_total_count": 0, "comment_total_count": 0}
+                )
+                totals[did]["comment_total_count"] = int(bucket["doc_count"])
         except Exception as e:  # pylint: disable=broad-exception-caught
             print(f"Comment totals query failed: {e}")
         return totals

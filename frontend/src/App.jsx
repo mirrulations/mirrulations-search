@@ -31,7 +31,6 @@ export default function App() {
   const [unauthorized, setUnauthorized] = useState(false);
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
-  /** Passed as GET /search/?sort_by= (empty = server default relevance) */
   const [searchSortBy, setSearchSortBy] = useState("");
 
   useEffect(() => {
@@ -70,8 +69,7 @@ export default function App() {
     status.size +
     Object.values(selectedCfrParts).reduce((sum, set) => sum + set.size, 0);
 
-  const runSearch = async (newPage = 1, sortByOverride) => {
-    const sortBy = sortByOverride !== undefined ? sortByOverride : searchSortBy;
+  const runSearch = async (newPage = 1) => {
     setLoading(true);
     setHasSearched(true);
     setUnauthorized(false);
@@ -94,8 +92,7 @@ export default function App() {
         selectedCfrList,
         newPage,
         yearFrom,
-        yearTo,
-        sortBy
+        yearTo
       );
 
       setResults(data.results);
@@ -245,13 +242,7 @@ export default function App() {
                       id="search-sort-by"
                       className="search-sort-select"
                       value={searchSortBy}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setSearchSortBy(v);
-                        if (hasSearched) {
-                          runSearch(1, v);
-                        }
-                      }}
+                      onChange={(e) => setSearchSortBy(e.target.value)}
                     >
                       <option value="">Relevance (default)</option>
                       <option value="document_count">Total documents in docket</option>
@@ -266,6 +257,7 @@ export default function App() {
                     hasSearched={hasSearched}
                     query={query}
                     unauthorized={unauthorized}
+                    sortBy={searchSortBy}
                   />
                   <div className="pagination-div">
                     <button

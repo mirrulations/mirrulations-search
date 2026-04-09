@@ -262,12 +262,28 @@ class InternalLogic:  # pylint: disable=too-few-public-methods
 
     def _sort_results(self, rows, sort_by=None):
         """Sort results by the requested field, defaulting to relevance."""
+        def _safe_int(val):
+            try:
+                return int(val)
+            except (TypeError, ValueError):
+                return 0
+
         if sort_by == "modify_date":
             rows.sort(key=lambda r: r.get("modify_date") or "", reverse=True)
         elif sort_by == "comment_count":
-            rows.sort(key=lambda r: int(r.get("comment_total_count", 0)), reverse=True)
+            rows.sort(
+                key=lambda r: (
+                    -_safe_int(r.get("comment_total_count")),
+                    str(r.get("docket_id", "")),
+                ),
+            )
         elif sort_by == "document_count":
-            rows.sort(key=lambda r: int(r.get("document_total_count", 0)), reverse=True)
+            rows.sort(
+                key=lambda r: (
+                    -_safe_int(r.get("document_total_count")),
+                    str(r.get("docket_id", "")),
+                ),
+            )
         else:
             rows.sort(
                 key=lambda r: (
