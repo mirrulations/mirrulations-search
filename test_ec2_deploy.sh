@@ -31,6 +31,11 @@ if grep -q "dev.mirrulations.org" prod_deploy.sh mirrsearch.service 2>/dev/null;
   sed -i "s/dev\.mirrulations\.org/${DOMAIN}/g" mirrsearch.service || true
 fi
 
+echo "Ensuring Postgres is running..."
+for svc in postgresql postgresql-14 postgresql-15 postgresql-16 postgresql-17; do
+  sudo systemctl start "$svc" 2>/dev/null && break
+done
+
 echo "Preparing DB SQL files in /tmp..."
 cp db/schema-postgres.sql /tmp/schema-postgres.sql
 cp db/sample-data.sql /tmp/sample-data.sql
@@ -53,6 +58,7 @@ sudo systemctl restart postgresql || true
 
 echo "Validating DB visibility..."
 PGPASSWORD=postgres psql -h localhost -U postgres -lqt postgres | grep -w mirrulations >/dev/null
+
 
 echo "Running deployment..."
 chmod +x prod_deploy.sh
