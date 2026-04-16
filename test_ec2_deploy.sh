@@ -24,6 +24,10 @@ if [[ ! -f "prod_deploy.sh" ]]; then
   exit 1
 fi
 
+echo "Rewriting service file paths to use test project directory..."
+PROD_DIR="/home/ec2-user/mirrulations-search"
+sed -i "s|${PROD_DIR}|${PROJECT_DIR}|g" mirrsearch.service
+
 echo "Checking domain references..."
 if grep -q "dev.mirrulations.org" prod_deploy.sh mirrsearch.service 2>/dev/null; then
   echo "Replacing dev.mirrulations.org -> ${DOMAIN}"
@@ -60,10 +64,12 @@ echo "Validating DB visibility..."
 PGPASSWORD=postgres psql -h localhost -U postgres -lqt postgres | grep -w mirrulations >/dev/null
 
 
+echo "Enabling test OAuth handler (local DB, OAuth via AWS)..."
+sed -i 's/^Environment="USE_AWS_SECRETS=true"/Environment="USE_TEST_OAUTH=true"/' mirrsearch.service
+
 echo "Running deployment..."
 chmod +x prod_deploy.sh
 export AWS_REGION="${AWS_REGION:-us-east-1}"
-export AWS_SECRET_NAME="${AWS_SECRET_NAME:-test/mirrulations}"
 ./prod_deploy.sh
 
 echo "Verifying service..."

@@ -57,6 +57,8 @@ def _build_paginated_response(results, pagination):
 
 def _make_oauth_handler():
     """Create OAuthHandler from environment variables or AWS Secrets Manager."""
+    if os.getenv("USE_TEST_OAUTH", "").lower() in {"1", "true", "yes", "on"}:
+        return _make_test_oauth_handler_from_aws()
     use_aws = os.getenv("USE_AWS_SECRETS", "").lower() in {"1", "true", "yes", "on"}
     if use_aws:
         return _make_oauth_handler_from_aws()
@@ -83,6 +85,27 @@ def _make_oauth_handler_from_aws():
     )
     return OAuthHandler(
         base_url=secret.get("base_url", ""),
+        google_client_id=secret.get("google_client_id", ""),
+        google_client_secret=secret.get("google_client_secret", ""),
+        jwt_secret=secret.get("jwt_secret", "dev-secret")
+    )
+
+
+def _make_test_oauth_handler_from_aws():
+    """Create OAuthHandler for test.mirrulations.org using AWS secrets."""
+    import boto3  # pylint: disable=import-outside-toplevel
+    import json  # pylint: disable=import-outside-toplevel
+    client = boto3.client(
+        "secretsmanager",
+        region_name=os.getenv("AWS_REGION", "us-east-1")
+    )
+    secret = json.loads(
+        client.get_secret_value(
+            SecretId=os.getenv("OAUTH_SECRET_NAME", "mirrulations/oauth")
+        )["SecretString"]
+    )
+    return OAuthHandler(
+        base_url="https://test.mirrulations.org",
         google_client_id=secret.get("google_client_id", ""),
         google_client_secret=secret.get("google_client_secret", ""),
         jwt_secret=secret.get("jwt_secret", "dev-secret")
