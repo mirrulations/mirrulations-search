@@ -24,15 +24,39 @@ if [[ ! -f "prod_deploy.sh" ]]; then
   exit 1
 fi
 
-echo "Rewriting service file paths to use test project directory..."
-PROD_DIR="/home/ec2-user/mirrulations-search"
-sed -i "s|${PROD_DIR}|${PROJECT_DIR}|g" mirrsearch.service
+echo "Writing mirrsearch.service for test deployment..."
+cat > mirrsearch.service <<SVCEOF
+[Unit]
+Description=Mirrulations-Search
+After=network.target
 
-echo "Checking domain references..."
-if grep -q "dev.mirrulations.org" prod_deploy.sh mirrsearch.service 2>/dev/null; then
+[Service]
+User=root
+Group=root
+WorkingDirectory=${PROJECT_DIR}
+EnvironmentFile=-${PROJECT_DIR}/.env
+Environment="PATH=${PROJECT_DIR}/.venv/bin"
+Environment="PYTHONPATH=${PROJECT_DIR}/src"
+Environment="USE_AWS_SECRETS=true"
+Environment="USE_TEST_OAUTH=true"
+Environment="OPENSEARCH_MATCH_DOCKET_BUCKET_SIZE=50000"
+Environment="OPENSEARCH_COMMENT_ID_TERMS_SIZE=50000"
+ExecStart=${PROJECT_DIR}/.venv/bin/gunicorn \
+    --certfile /etc/letsencrypt/live/${DOMAIN}/fullchain.pem \
+    --keyfile /etc/letsencrypt/live/${DOMAIN}/privkey.pem \
+    --bind 0.0.0.0:443 \
+    --timeout 120 \
+    --worker-class gthread --workers 2 --threads 4 mirrsearch.app:app
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+SVCEOF
+
+echo "Checking domain references in prod_deploy.sh..."
+if grep -q "dev.mirrulations.org" prod_deploy.sh 2>/dev/null; then
   echo "Replacing dev.mirrulations.org -> ${DOMAIN}"
   sed -i "s/dev\.mirrulations\.org/${DOMAIN}/g" prod_deploy.sh || true
-  sed -i "s/dev\.mirrulations\.org/${DOMAIN}/g" mirrsearch.service || true
 fi
 
 echo "Ensuring Postgres is running..."
@@ -64,12 +88,14 @@ echo "Validating DB visibility..."
 PGPASSWORD=postgres psql -h localhost -U postgres -lqt postgres | grep -w mirrulations >/dev/null
 
 
-echo "Enabling test OAuth handler (local DB, OAuth via AWS)..."
-sed -i 's/^Environment="USE_AWS_SECRETS=true"/Environment="USE_TEST_OAUTH=true"/' mirrsearch.service
+echo "Patching db.py to use correct RDS secret..."
+sed -i '/response = client.get_secret_value/s|SecretId="[^"]*"|SecretId="mirrulationsdb/postgres/master"|' src/mirrsearch/db.py
+sed -i '/_get_secrets_from_aws/,/return json/s|region_name="[^"]*"|region_name="us-east-1"|' src/mirrsearch/db.py
 
 echo "Running deployment..."
 chmod +x prod_deploy.sh
 export AWS_REGION="${AWS_REGION:-us-east-1}"
+export AWS_SECRET_NAME="${AWS_SECRET_NAME:-mirrulationsdb/postgres/master}"
 ./prod_deploy.sh
 
 echo "Verifying service..."
