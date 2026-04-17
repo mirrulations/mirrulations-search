@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Load docket metadata, regulatory documents, and public comments from mirrulations S3 JSON into
-PostgreSQL (tables ``dockets``, ``documentsWithFRdoc``, and ``comments``).
+PostgreSQL (tables ``dockets``, ``documents``, and ``comments``).
 
 By default, S3 download includes ``docket/``, ``documents/``, ``comments/``, and derived data (when
 present). Use ``--skip-comments-download`` to fetch only docket + documents. Use
@@ -351,7 +351,7 @@ def _upsert_sql(table: str, columns: list[str], pk: str) -> str:
 
 
 DOCKET_UPSERT_SQL = _upsert_sql("dockets", DOCKET_COLS, "docket_id")
-DOCUMENT_UPSERT_SQL = _upsert_sql("documentsWithFRdoc", DOC_COLS, "document_id")
+DOCUMENT_UPSERT_SQL = _upsert_sql("documents", DOC_COLS, "document_id")
 COMMENT_UPSERT_SQL = _upsert_sql("comments", COMMENT_COLS, "comment_id")
 
 
@@ -464,7 +464,7 @@ def _row_tuple(record: dict, columns: list[str]) -> tuple:
     return tuple(record[c] for c in columns)
 
 
-_REQUIRED_PUBLIC_TABLES = frozenset({"dockets", "documentswithfrdoc", "comments"})
+_REQUIRED_PUBLIC_TABLES = frozenset({"dockets", "documents", "comments"})
 
 
 def _require_ingest_schema(conn, args: argparse.Namespace) -> None:
@@ -481,7 +481,7 @@ def _require_ingest_schema(conn, args: argparse.Namespace) -> None:
     if missing:
         log.error(
             "Database %r is missing required table(s): %s.\n"
-            "From the project root, load the schema (creates documentsWithFRdoc, etc.):\n"
+            "From the project root, load the schema (creates documents, etc.):\n"
             "  psql -h %s -p %s -U %s -d %s -f db/schema-postgres.sql",
             args.dbname,
             ", ".join(missing),
@@ -496,7 +496,7 @@ def _require_ingest_schema(conn, args: argparse.Namespace) -> None:
 def _ensure_comments_document_fk(conn) -> None:
     """
     Legacy DBs may have ``comments.document_id`` referencing ``documents`` while ingest writes to
-    ``documentsWithFRdoc``. Drop the wrong FK and attach to ``documentsWithFRdoc`` (matches
+    ``documents``. Drop the wrong FK and attach to ``documents`` (matches
     ``schema-postgres.sql``). Idempotent.
     """
     with conn.cursor() as cur:
@@ -517,7 +517,7 @@ def _ensure_comments_document_fk(conn) -> None:
         compact = defn.lower().replace(" ", "")
         if "foreignkey(document_id)" not in compact:
             continue
-        if "documentswithfrdoc" in defn.lower():
+        if "documents" in defn.lower():
             has_fr = True
             continue
         drop_names.append(conname)
@@ -538,11 +538,11 @@ def _ensure_comments_document_fk(conn) -> None:
                     """
                     ALTER TABLE comments
                     ADD CONSTRAINT comments_document_id_fkey
-                    FOREIGN KEY (document_id) REFERENCES documentsWithFRdoc (document_id)
+                    FOREIGN KEY (document_id) REFERENCES documents (document_id)
                     """
                 )
                 log.info(
-                    "Added FK comments.document_id → documentsWithFRdoc.document_id."
+                    "Added FK comments.document_id → documents.document_id."
                 )
             except psycopg2.errors.DuplicateObject:
                 pass
@@ -551,7 +551,7 @@ def _ensure_comments_document_fk(conn) -> None:
 
 def _fk_id_sets(conn) -> tuple[set[str], set[str]]:
     with conn.cursor() as cur:
-        cur.execute("SELECT document_id FROM documentsWithFRdoc;")
+        cur.execute("SELECT document_id FROM documents;")
         docs = {r[0] for r in cur.fetchall()}
         cur.execute("SELECT docket_id FROM dockets;")
         dockets = {r[0] for r in cur.fetchall()}
@@ -663,7 +663,7 @@ def _fetch_db_summary(conn, docket_id: str) -> tuple[str | None, int, int, list[
         row = cur.fetchone()
         title = row[0] if row else None
         cur.execute(
-            "SELECT COUNT(*) FROM documentsWithFRdoc WHERE docket_id = %s",
+            "SELECT COUNT(*) FROM documents WHERE docket_id = %s",
             (docket_id,),
         )
         n_docs = cur.fetchone()[0]
@@ -671,7 +671,7 @@ def _fetch_db_summary(conn, docket_id: str) -> tuple[str | None, int, int, list[
         n_comments = cur.fetchone()[0]
         cur.execute(
             """
-            SELECT document_title FROM documentsWithFRdoc
+            SELECT document_title FROM documents
             WHERE docket_id = %s AND document_title IS NOT NULL AND TRIM(document_title) <> ''
             ORDER BY document_id
             LIMIT 5
@@ -797,7 +797,7 @@ def ingest_comments(
         doc_id = record.get("document_id")
         if doc_id and not dry_run and doc_id not in valid_doc_ids:
             log.warning(
-                "%s: document_id %r not in documentsWithFRdoc — setting NULL.",
+                "%s: document_id %r not in documents — setting NULL.",
                 path.name,
                 doc_id,
             )
@@ -819,7 +819,7 @@ def ingest_comments(
 
     if nulled_doc:
         log.info(
-            "%d comment(s) had document_id set to NULL (missing documentsWithFRdoc row).",
+            "%d comment(s) had document_id set to NULL (missing documents row).",
             nulled_doc,
         )
     if nulled_docket:

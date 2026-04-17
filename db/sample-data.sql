@@ -208,7 +208,7 @@ INSERT INTO dockets (
 -- DOCUMENTS
 -- =========================================
 
-INSERT INTO documentsWithFRdoc (
+INSERT INTO documents (
     document_id,
     docket_id,
     document_api_link,
@@ -298,7 +298,7 @@ INSERT INTO documentsWithFRdoc (
     NULL
 );
 
-INSERT INTO documentsWithFRdoc (
+INSERT INTO documents (
     document_id,
     docket_id,
     document_api_link,
@@ -410,7 +410,7 @@ INSERT INTO documentsWithFRdoc (
     '2025-13271'
 );
 
-INSERT INTO documentsWithFRdoc (
+INSERT INTO documents (
     document_id,
     docket_id,
     document_api_link,
@@ -500,7 +500,7 @@ INSERT INTO documentsWithFRdoc (
     '2025-15492'
 );
 
-INSERT INTO documentsWithFRdoc (
+INSERT INTO documents (
     document_id,
     docket_id,
     document_api_link,
@@ -612,7 +612,7 @@ INSERT INTO documentsWithFRdoc (
     '2025-19787'
 );
 
-INSERT INTO documentsWithFRdoc (
+INSERT INTO documents (
     document_id,
     docket_id,
     document_api_link,
@@ -702,7 +702,7 @@ INSERT INTO documentsWithFRdoc (
     '2025-21458'
 );
 
-INSERT INTO documentsWithFRdoc(
+INSERT INTO documents(
     document_id,
     docket_id,
     document_api_link,
@@ -792,7 +792,7 @@ INSERT INTO documentsWithFRdoc(
     NULL
 );
 
-INSERT INTO documentsWithFRdoc(
+INSERT INTO documents(
     document_id,
     docket_id,
     document_api_link,
@@ -882,7 +882,7 @@ INSERT INTO documentsWithFRdoc(
     '2025-12368'
 );
 
-INSERT INTO documentsWithFRdoc(
+INSERT INTO documents(
     document_id,
     docket_id,
     document_api_link,
@@ -972,7 +972,7 @@ INSERT INTO documentsWithFRdoc(
     '2025-20681'
 );
 
-INSERT INTO documentsWithFRdoc(
+INSERT INTO documents(
     document_id,
     docket_id,
     document_api_link,
@@ -1062,7 +1062,7 @@ INSERT INTO documentsWithFRdoc(
     '2025-07127'
 );
 
-INSERT INTO documentsWithFRdoc (
+INSERT INTO documents (
     document_id,
     docket_id,
     document_api_link,
@@ -1152,7 +1152,7 @@ INSERT INTO documentsWithFRdoc (
     '2025-06061'
 );
 
-INSERT INTO documentsWithFRdoc (
+INSERT INTO documents (
     document_id,
     docket_id,
     document_api_link,
@@ -1242,7 +1242,7 @@ INSERT INTO documentsWithFRdoc (
     NULL
 );
 
-INSERT INTO documentsWithFRdoc(
+INSERT INTO documents(
     document_id,
     docket_id,
     document_api_link,
@@ -1332,7 +1332,7 @@ INSERT INTO documentsWithFRdoc(
     NULL
 );
 
-INSERT INTO documentsWithFRdoc(
+INSERT INTO documents(
     document_id,
     docket_id,
     document_api_link,
@@ -1422,7 +1422,7 @@ INSERT INTO documentsWithFRdoc(
     NULL
 );
 
-INSERT INTO documentsWithFRdoc(
+INSERT INTO documents(
     document_id,
     docket_id,
     document_api_link,
@@ -1512,7 +1512,7 @@ INSERT INTO documentsWithFRdoc(
     '2026-04829'
 );
 
-INSERT INTO documentsWithFRdoc(
+INSERT INTO documents(
     document_id,
     docket_id,
     document_api_link,
@@ -1602,7 +1602,7 @@ INSERT INTO documentsWithFRdoc(
     '2025-22162'
 );
 
-INSERT INTO documentsWithFRdoc(
+INSERT INTO documents(
     document_id,
     docket_id,
     document_api_link,
@@ -1692,7 +1692,7 @@ INSERT INTO documentsWithFRdoc(
     NULL
 );
 
-INSERT INTO documentsWithFRdoc(
+INSERT INTO documents(
     document_id,
     docket_id,
     document_api_link,
@@ -1782,7 +1782,7 @@ INSERT INTO documentsWithFRdoc(
     '2026-04919'
 );
 
-INSERT INTO documentsWithFRdoc(
+INSERT INTO documents(
     document_id,
     docket_id,
     document_api_link,

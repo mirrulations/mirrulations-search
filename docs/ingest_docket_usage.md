@@ -5,7 +5,7 @@
 `ingest_docket.py` is a Python script that downloads docket bundles from the mirrulations S3 bucket and ingests regulatory data into PostgreSQL. It processes:
 
 - **Docket metadata** (dockets table)
-- **Regulatory documents** (documentsWithFRdoc table)
+- **Regulatory documents** (documents table)
 - **Public comments** (comments table)
 
 The script fetches data from regulations.gov v4 API exports stored in S3 and loads them into your local PostgreSQL database.

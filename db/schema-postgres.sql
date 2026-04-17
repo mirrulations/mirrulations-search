@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS dockets (
 -- Stores document metadata; references dockets
 -- When a new document is added then a column in the CFR part table should be added
 
-CREATE TABLE IF NOT EXISTS documentsWithFRdoc (
+CREATE TABLE IF NOT EXISTS documents (
     document_id VARCHAR(50) NOT NULL PRIMARY KEY,
     docket_id VARCHAR(50) NOT NULL,
     document_api_link VARCHAR(2000) NOT NULL UNIQUE,
@@ -92,7 +92,7 @@ CREATE TABLE IF NOT EXISTS documentsWithFRdoc (
 CREATE TABLE IF NOT EXISTS comments (
     comment_id VARCHAR(50) NOT NULL PRIMARY KEY,
     api_link VARCHAR(2000) NOT NULL UNIQUE,
-    document_id VARCHAR(50) REFERENCES documentsWithFRdoc(document_id),
+    document_id VARCHAR(50) REFERENCES documents(document_id),
     duplicate_comment_count INT DEFAULT 0 NOT NULL,
     address1 VARCHAR(200),
     address2 VARCHAR(200),

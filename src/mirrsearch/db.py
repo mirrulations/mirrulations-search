@@ -132,7 +132,7 @@ class DBLayer:  # pylint: disable=too-many-public-methods
         clauses = " OR ".join("(cp.title = %s AND cp.cfrPart = %s)" for _ in cfr_pairs)
         sql = f"""
             SELECT DISTINCT d.docket_id
-            FROM documentsWithFRdoc d
+            FROM documents d
             JOIN cfrparts cp ON cp.frdocnum = d.frdocnum
             WHERE ({clauses})
         """
@@ -161,7 +161,7 @@ class DBLayer:  # pylint: disable=too-many-public-methods
                 cp.cfrPart,
                 l.link
             FROM dockets d
-            JOIN documentsWithFRdoc doc ON doc.docket_id = d.docket_id
+            JOIN documents doc ON doc.docket_id = d.docket_id
             LEFT JOIN cfrparts cp ON cp.frdocnum = doc.frdocnum
             LEFT JOIN links l ON l.title = cp.title AND l.cfrPart = cp.cfrPart
             WHERE d.docket_title ILIKE %s
@@ -190,7 +190,7 @@ class DBLayer:  # pylint: disable=too-many-public-methods
             clauses = " OR ".join("cp3.cfrPart = %s" for _ in cfr_patterns)
             sql += (
                 " AND EXISTS ("
-                "SELECT 1 FROM documentsWithFRdoc d3 "
+                "SELECT 1 FROM documents d3 "
                 "JOIN cfrparts cp3 ON cp3.frdocnum = d3.frdocnum "
                 "WHERE d3.docket_id = d.docket_id "
                 f"AND ({clauses})"
@@ -205,7 +205,7 @@ class DBLayer:  # pylint: disable=too-many-public-methods
             )
             sql += (
                 " AND EXISTS ("
-                "SELECT 1 FROM documentsWithFRdoc d2 "
+                "SELECT 1 FROM documents d2 "
                 "JOIN cfrparts cp2 ON cp2.frdocnum = d2.frdocnum "
                 "WHERE d2.docket_id = d.docket_id "
                 f"AND ({exact_clauses})"
@@ -240,7 +240,7 @@ class DBLayer:  # pylint: disable=too-many-public-methods
                 cp.cfrPart,
                 l.link
             FROM dockets d
-            JOIN documentsWithFRdoc doc ON doc.docket_id = d.docket_id
+            JOIN documents doc ON doc.docket_id = d.docket_id
             LEFT JOIN cfrparts cp ON cp.frdocnum = doc.frdocnum
             LEFT JOIN links l ON l.title = cp.title AND l.cfrPart = cp.cfrPart
             WHERE d.docket_id = ANY(%s)
@@ -458,7 +458,7 @@ class DBLayer:  # pylint: disable=too-many-public-methods
         if self.conn is not None:
             with self.conn.cursor() as cur:
                 cur.execute(
-                    "SELECT docket_id, COUNT(*) FROM documentsWithFRdoc "
+                    "SELECT docket_id, COUNT(*) FROM documents "
                     "WHERE docket_id = ANY(%s) GROUP BY docket_id",
                     (list(docket_ids),)
                 )
@@ -493,13 +493,13 @@ class DBLayer:  # pylint: disable=too-many-public-methods
                 return {"aggregations": {"by_docket": {"buckets": []}}}
 
         def fetch_doc_totals_from_sql() -> Dict[str, int]:
-            """Fetch per-docket document counts from Postgres (documentsWithFRdoc table)."""
+            """Fetch per-docket document counts from Postgres (documents table)."""
             if self.conn is None:
                 return {}
             try:
                 with self.conn.cursor() as cur:
                     cur.execute(
-                        "SELECT docket_id, COUNT(*) FROM documentsWithFRdoc "
+                        "SELECT docket_id, COUNT(*) FROM documents "
                         "GROUP BY docket_id"
                     )
                     return {row[0]: row[1] for row in cur.fetchall()}

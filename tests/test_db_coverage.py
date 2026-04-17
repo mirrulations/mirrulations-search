@@ -174,7 +174,7 @@ def test_get_cfr_docket_ids_queries_correct_table():
     db = DBLayer(conn=conn)
     result = db._get_cfr_docket_ids([("Title 42", "413")])
     sql, params = conn.calls[0]
-    assert "documentsWithFRdoc" in sql
+    assert "documents" in sql
     assert "cfrparts" in sql
     assert "cp.title = %s" in sql
     assert "cp.cfrPart = %s" in sql

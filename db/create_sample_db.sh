@@ -59,7 +59,7 @@ echo "Loading sample data..."
 psql -v ON_ERROR_STOP=1 -d "$DB_NAME" -f "$SAMPLE_FILE"
 
 # Verify: tables that have sample data should have rows.
-TABLES=("dockets" "documentsWithFRdoc" "links" "cfrparts" "federal_register_documents")
+TABLES=("dockets" "documents" "links" "cfrparts" "federal_register_documents")
 for table_name in "${TABLES[@]}"; do
     row_count=$(psql -d "$DB_NAME" -tAc "SELECT count(*) FROM $table_name;")
     if [ "${row_count:-0}" -lt 1 ]; then

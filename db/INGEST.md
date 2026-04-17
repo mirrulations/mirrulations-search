@@ -29,7 +29,7 @@ For **Federal Register–only** ingest (without the full flow here), see `INGEST
    # or, e.g.: psql -h localhost -U "$(whoami)" -d mirrulations -f db/schema-postgres.sql
    ```
 
-   Tables used by this script include `dockets`, `documentsWithFRdoc`, `comments`, and (unless `--skip-federal-register`) `federal_register_documents` and `cfrparts`.
+   Tables used by this script include `dockets`, `documents`, `comments`, and (unless `--skip-federal-register`) `federal_register_documents` and `cfrparts`.
 
    If you see `FATAL: role "postgres" does not exist`, that usually comes from using the default `--user postgres` in `ingest.py` or from tools that assume that role. Fix it by passing `--user "$(whoami)"` (typical on macOS/Homebrew Postgres), or create the role once with `createuser -s postgres` if you need a `postgres` login. You only need the latter if something in your workflow still expects the `postgres` user.
 
