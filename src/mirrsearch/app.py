@@ -57,6 +57,8 @@ def _build_paginated_response(results, pagination):
 
 def _make_oauth_handler():
     """Create OAuthHandler from environment variables or AWS Secrets Manager."""
+    if os.getenv("USE_TEST_OAUTH", "").lower() in {"1", "true", "yes", "on"}:
+        return _make_test_oauth_handler_from_aws()
     use_aws = os.getenv("USE_AWS_SECRETS", "").lower() in {"1", "true", "yes", "on"}
     if use_aws:
         return _make_oauth_handler_from_aws()
@@ -87,6 +89,28 @@ def _make_oauth_handler_from_aws():
         google_client_secret=secret.get("google_client_secret", ""),
         jwt_secret=secret.get("jwt_secret", "dev-secret")
     )
+
+
+def _make_test_oauth_handler_from_aws():
+    """Create OAuthHandler for test.mirrulations.org using AWS secrets."""
+    import boto3  # pylint: disable=import-outside-toplevel
+    import json  # pylint: disable=import-outside-toplevel
+    client = boto3.client(
+        "secretsmanager",
+        region_name=os.getenv("AWS_REGION", "us-east-1")
+    )
+    secret = json.loads(
+        client.get_secret_value(
+            SecretId=os.getenv("OAUTH_SECRET_NAME", "mirrulations/oauth")
+        )["SecretString"]
+    )
+    return OAuthHandler(
+        base_url="https://test.mirrulations.org",
+        google_client_id=secret.get("google_client_id", ""),
+        google_client_secret=secret.get("google_client_secret", ""),
+        jwt_secret=secret.get("jwt_secret", "dev-secret")
+    )
+
 
 def _get_redis_client():
     """Create and return a Redis client from environment variables."""
@@ -131,7 +155,7 @@ def _get_user_from_cookie(oauth_handler):
         return None
 
 
-def _handle_oauth_callback(handler, db_layer_ref=None): # pylint: disable=too-many-locals,too-many-statements,too-many-branches,too-many-return-statements
+def _handle_oauth_callback(handler, db_layer_ref=None):  # pylint: disable=too-many-locals,too-many-statements,too-many-branches,too-many-return-statements
     """Exchange OAuth code for JWT cookie response. Returns response or None."""
     code = request.args.get("code")
     if not code:
@@ -223,7 +247,6 @@ def create_app(dist_dir=None, db_layer=None, oauth_handler=None):  # pylint: dis
         return send_from_directory(dist_dir, "index.html")
 
     @flask_app.route("/admin/login")
-
     def admin_login():
         handler = oauth_handler or _make_oauth_handler()
         authorization_url, _ = handler.get_authorization_url()
@@ -410,7 +433,6 @@ def create_app(dist_dir=None, db_layer=None, oauth_handler=None):  # pylint: dis
         except Exception:  # pylint: disable=broad-except
             return _handle_redis_enqueue_failure(db_layer, job_id)
         return jsonify({"job_id": job_id, "status": "started"}), 202
-
 
     @flask_app.route("/download/status/<job_id>", methods=["GET"])
     def download_status(job_id):  # pylint: disable=too-many-return-statements
