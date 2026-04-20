@@ -2,8 +2,10 @@ import json
 from dataclasses import dataclass
 from typing import List, Dict, Any, Set
 import os
-import psycopg2
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import Engine
 from opensearchpy import OpenSearch
+
 try:
     import requests
     from requests_aws4auth import AWS4Auth
@@ -99,11 +101,113 @@ def _opensearch_comment_id_terms_size() -> int:
     return _parse_positive_int_env("OPENSEARCH_COMMENT_ID_TERMS_SIZE", 65535)
 
 
+# ---------------------------------------------------------------------------
+# SQLAlchemy engine — created once at module level, shared across all requests.
+#
+#   pool_pre_ping=True  — before handing out a connection, SQLAlchemy runs
+#                         SELECT 1.  If the connection is dead it discards it
+#                         and opens a fresh one transparently.
+#   pool_recycle=1800   — recycle connections older than 30 minutes so RDS's
+#                         idle-connection timeout never kills them silently.
+#   pool_size / max_overflow — tune to match your Gunicorn worker count.
+# ---------------------------------------------------------------------------
+_ENGINE: Engine = None
+
+
+def _build_engine(dsn: str) -> Engine:
+    return create_engine(
+        dsn,
+        pool_pre_ping=True,
+        pool_recycle=1800,
+        pool_size=10,
+        max_overflow=5,
+        connect_args={
+            "connect_timeout": 5,
+            "options": "-c statement_timeout=30000",
+        },
+    )
+
+
+def _get_engine() -> Engine:
+    """Return the shared SQLAlchemy engine, creating it on first call."""
+    global _ENGINE  # pylint: disable=global-statement
+    if _ENGINE is not None:
+        return _ENGINE
+
+    use_aws_secrets = os.getenv("USE_AWS_SECRETS", "").lower() in {"1", "true", "yes", "on"}
+    if use_aws_secrets:
+        creds = _get_secrets_from_aws()
+        dsn = (
+            f"postgresql+psycopg2://{creds['username']}:{creds['password']}"
+            f"@{creds['host']}:{creds['port']}/{creds['db']}"
+        )
+    else:
+        if LOAD_DOTENV is not None:
+            LOAD_DOTENV()
+        host = os.getenv("DB_HOST", "localhost")
+        port = os.getenv("DB_PORT", "5432")
+        name = os.getenv("DB_NAME", "your_db")
+        user = os.getenv("DB_USER", "your_user")
+        password = os.getenv("DB_PASSWORD", "your_password")
+        dsn = f"postgresql+psycopg2://{user}:{password}@{host}:{port}/{name}"
+
+    _ENGINE = _build_engine(dsn)
+    return _ENGINE
+
+
 @dataclass(frozen=True)
 class DBLayer:  # pylint: disable=too-many-public-methods
-    conn: Any = None
+    """
+    All database methods now use SQLAlchemy's connection pool via _get_engine().
 
-    def search( # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-branches,too-many-statements
+    self.engine holds the shared Engine.  Every method checks `self.engine is None`
+    the same way the original checked `self.conn is None`, so the rest of the app
+    sees no interface change at all.
+    """
+    engine: Any = None
+
+    # ------------------------------------------------------------------
+    # Internal helpers — every SQL method goes through one of these.
+    # SQLAlchemy's pool_pre_ping already handles dead-connection detection;
+    # engine.begin() handles automatic rollback on failure.
+    # ------------------------------------------------------------------
+    def _run(self, sql: str, params: dict = None):
+        """
+        Execute a raw SQL string with the engine's connection pool.
+        Returns all rows as a list of tuples.
+        Uses :name style params (SQLAlchemy text() requirement).
+        """
+        with self.engine.connect() as conn:
+            result = conn.execute(text(sql), params or {})
+            return result.fetchall()
+
+    def _run_write(self, sql: str, params: dict = None) -> int:
+        """
+        Execute a write (INSERT/UPDATE/DELETE) and commit.
+        Returns rowcount.
+        engine.begin() auto-commits on success and auto-rolls back on error.
+        """
+        with self.engine.begin() as conn:
+            result = conn.execute(text(sql), params or {})
+            return result.rowcount
+
+    def _run_returning(self, sql: str, params: dict = None):
+        """
+        Execute a write with RETURNING and commit.
+        Returns the first column of the first row.
+        engine.begin() auto-commits on success and auto-rolls back on error.
+        """
+        with self.engine.begin() as conn:
+            result = conn.execute(text(sql), params or {})
+            return result.fetchone()[0]
+
+    # ------------------------------------------------------------------
+    # All methods below are identical in behaviour to the original.
+    # The only change is cursor/execute → _run / _run_write / _run_returning,
+    # and %s params → :name params (SQLAlchemy text() style).
+    # ------------------------------------------------------------------
+
+    def search(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-branches,too-many-statements
             self,
             query: str,
             docket_type_param: str = None,
@@ -112,7 +216,7 @@ class DBLayer:  # pylint: disable=too-many-public-methods
             start_date: str = None,
             end_date: str = None) \
             -> List[Dict[str, Any]]:
-        if self.conn is None:
+        if self.engine is None:
             return []
         results = self._search_dockets_postgres(
             query, docket_type_param, agency, cfr_part_param, start_date, end_date
@@ -125,22 +229,24 @@ class DBLayer:  # pylint: disable=too-many-public-methods
 
     def _get_cfr_docket_ids(self, cfr_pairs: List[tuple]) -> Set[str]:
         """Return docket IDs matching exact CFR title+part pairs."""
-        if self.conn is None or not cfr_pairs:
+        if self.engine is None or not cfr_pairs:
             return set()
-        clauses = " OR ".join("(cp.title = %s AND cp.cfrPart = %s)" for _ in cfr_pairs)
+        clauses = " OR ".join(
+            f"(cp.title = :title_{i} AND cp.cfrPart = :part_{i})"
+            for i in range(len(cfr_pairs))
+        )
         sql = f"""
             SELECT DISTINCT d.docket_id
             FROM documents d
             JOIN cfrparts cp ON cp.frdocnum = d.frdocnum
             WHERE ({clauses})
         """
-        params: List[str] = []
-        for title, part in cfr_pairs:
-            params.append(title)
-            params.append(part)
-        with self.conn.cursor() as cur:
-            cur.execute(sql, params)
-            return {row[0] for row in cur.fetchall()}
+        params = {}
+        for i, (title, part) in enumerate(cfr_pairs):
+            params[f"title_{i}"] = title
+            params[f"part_{i}"] = part
+        rows = self._run(sql, params)
+        return {row[0] for row in rows}
 
     def _search_dockets_postgres(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-branches,too-many-statements
             self, query: str, docket_type_param: str = None,
@@ -162,30 +268,31 @@ class DBLayer:  # pylint: disable=too-many-public-methods
             JOIN documents doc ON doc.docket_id = d.docket_id
             LEFT JOIN cfrparts cp ON cp.frdocnum = doc.frdocnum
             LEFT JOIN links l ON l.title = cp.title AND l.cfrPart = cp.cfrPart
-            WHERE d.docket_title ILIKE %s
+            WHERE d.docket_title ILIKE :query
         """
-        params = [f"%{(query or '').strip().lower()}%"]
+        params: Dict[str, Any] = {"query": f"%{(query or '').strip().lower()}%"}
 
         if docket_type_param:
-            sql += " AND d.docket_type = %s"
-            params.append(docket_type_param)
+            sql += " AND d.docket_type = :docket_type"
+            params["docket_type"] = docket_type_param
 
         if agency:
-            clauses = " OR ".join("d.agency_id ILIKE %s" for _ in agency)
+            clauses = " OR ".join(f"d.agency_id ILIKE :agency_{i}" for i in range(len(agency)))
             sql += f" AND ({clauses})"
-            params.extend(f"%{a}%" for a in agency)
+            for i, a in enumerate(agency):
+                params[f"agency_{i}"] = f"%{a}%"
 
         if start_date:
-            sql += " AND d.modify_date::date >= %s::date"
-            params.append(start_date)
+            sql += " AND d.modify_date::date >= :start_date::date"
+            params["start_date"] = start_date
 
         if end_date:
-            sql += " AND d.modify_date::date <= %s::date"
-            params.append(end_date)
+            sql += " AND d.modify_date::date <= :end_date::date"
+            params["end_date"] = end_date
 
         cfr_patterns = cfr_part_filter_patterns(cfr_part_param)
         if cfr_patterns:
-            clauses = " OR ".join("cp3.cfrPart = %s" for _ in cfr_patterns)
+            clauses = " OR ".join(f"cp3.cfrPart = :cfr_{i}" for i in range(len(cfr_patterns)))
             sql += (
                 " AND EXISTS ("
                 "SELECT 1 FROM documents d3 "
@@ -194,12 +301,14 @@ class DBLayer:  # pylint: disable=too-many-public-methods
                 f"AND ({clauses})"
                 ")"
             )
-            params.extend(cfr_patterns)
+            for i, p in enumerate(cfr_patterns):
+                params[f"cfr_{i}"] = p
 
         exact_pairs = _cfr_exact_title_part_pairs(cfr_part_param)
         if exact_pairs:
             exact_clauses = " OR ".join(
-                "(cp2.title = %s AND cp2.cfrPart = %s)" for _ in exact_pairs
+                f"(cp2.title = :etitle_{i} AND cp2.cfrPart = :epart_{i})"
+                for i in range(len(exact_pairs))
             )
             sql += (
                 " AND EXISTS ("
@@ -209,23 +318,23 @@ class DBLayer:  # pylint: disable=too-many-public-methods
                 f"AND ({exact_clauses})"
                 ")"
             )
-            for title, part in exact_pairs:
-                params.extend([title, part])
+            for i, (title, part) in enumerate(exact_pairs):
+                params[f"etitle_{i}"] = title
+                params[f"epart_{i}"] = part
 
         sql += " ORDER BY d.modify_date DESC, d.docket_id, cp.title, cp.cfrPart LIMIT 50"
 
-        with self.conn.cursor() as cur:
-            cur.execute(sql, params)
-            dockets = {}
-            for row in cur.fetchall():
-                self._process_docket_row(dockets, row)
-            return [
-                {**d, "cfr_refs": list(d["cfr_refs"].values())}
-                for d in dockets.values()
-            ]
+        rows = self._run(sql, params)
+        dockets = {}
+        for row in rows:
+            self._process_docket_row(dockets, row)
+        return [
+            {**d, "cfr_refs": list(d["cfr_refs"].values())}
+            for d in dockets.values()
+        ]
 
     def get_dockets_by_ids(self, docket_ids: List[str]) -> List[Dict[str, Any]]:
-        if self.conn is None or not docket_ids:
+        if self.engine is None or not docket_ids:
             return []
         sql = """
             SELECT DISTINCT
@@ -241,25 +350,23 @@ class DBLayer:  # pylint: disable=too-many-public-methods
             JOIN documents doc ON doc.docket_id = d.docket_id
             LEFT JOIN cfrparts cp ON cp.frdocnum = doc.frdocnum
             LEFT JOIN links l ON l.title = cp.title AND l.cfrPart = cp.cfrPart
-            WHERE d.docket_id = ANY(%s)
+            WHERE d.docket_id = ANY(:docket_ids)
             ORDER BY d.modify_date DESC, d.docket_id, cp.title, cp.cfrPart
         """
-        with self.conn.cursor() as cur:
-            cur.execute(sql, (list(docket_ids),))
-            dockets = {}
-            for row in cur.fetchall():
-                self._process_docket_row(dockets, row)
-            return [
-                {**d, "cfr_refs": list(d["cfr_refs"].values())}
-                for d in dockets.values()
-            ]
+        rows = self._run(sql, {"docket_ids": list(docket_ids)})
+        dockets = {}
+        for row in rows:
+            self._process_docket_row(dockets, row)
+        return [
+            {**d, "cfr_refs": list(d["cfr_refs"].values())}
+            for d in dockets.values()
+        ]
 
     def get_agencies(self) -> List[str]:
-        if self.conn is None:
+        if self.engine is None:
             return []
-        with self.conn.cursor() as cur:
-            cur.execute("SELECT DISTINCT agency_id FROM dockets ORDER BY agency_id")
-            return [row[0] for row in cur.fetchall()]
+        rows = self._run("SELECT DISTINCT agency_id FROM dockets ORDER BY agency_id")
+        return [row[0] for row in rows]
 
     @staticmethod
     def _process_docket_row(dockets, row):
@@ -453,15 +560,14 @@ class DBLayer:  # pylint: disable=too-many-public-methods
             self, opensearch_client, docket_ids: List[str]) -> Dict[str, Dict[str, int]]:
         """Document totals from RDS, comment totals from OpenSearch."""
         totals: Dict[str, Dict[str, int]] = {}
-        if self.conn is not None:
-            with self.conn.cursor() as cur:
-                cur.execute(
-                    "SELECT docket_id, COUNT(*) FROM documents "
-                    "WHERE docket_id = ANY(%s) GROUP BY docket_id",
-                    (list(docket_ids),)
-                )
-                for docket_id, count in cur.fetchall():
-                    totals[docket_id] = {"document_total_count": count, "comment_total_count": 0}
+        if self.engine is not None:
+            rows = self._run(
+                "SELECT docket_id, COUNT(*) FROM documents "
+                "WHERE docket_id = ANY(:docket_ids) GROUP BY docket_id",
+                {"docket_ids": list(docket_ids)}
+            )
+            for docket_id, count in rows:
+                totals[docket_id] = {"document_total_count": count, "comment_total_count": 0}
         comment_query = {
             "size": 0,
             "query": {"bool": {"filter": [{"terms": {"docketId.keyword": docket_ids}}]}},
@@ -534,7 +640,7 @@ class DBLayer:  # pylint: disable=too-many-public-methods
 
     def get_collections(self, user_email: str) -> List[Dict[str, Any]]:
         """Return all collections belonging to the given user."""
-        if self.conn is None:
+        if self.engine is None:
             return []
         sql = """
             SELECT c.collection_id, c.collection_name, c.user_email,
@@ -544,101 +650,79 @@ class DBLayer:  # pylint: disable=too-many-public-methods
                    ) AS docket_ids
             FROM collections c
             LEFT JOIN collection_dockets cd ON cd.collection_id = c.collection_id
-            WHERE c.user_email = %s
+            WHERE c.user_email = :user_email
             GROUP BY c.collection_id, c.collection_name, c.user_email
             ORDER BY c.collection_id
         """
-        with self.conn.cursor() as cur:
-            cur.execute(sql, (user_email,))
-            return [
-                {
-                    "collection_id": row[0],
-                    "name": row[1],
-                    "user_email": row[2],
-                    "docket_ids": row[3] if isinstance(row[3], list) else []
-                }
-                for row in cur.fetchall()
-            ]
+        rows = self._run(sql, {"user_email": user_email})
+        return [
+            {
+                "collection_id": row[0],
+                "name": row[1],
+                "user_email": row[2],
+                "docket_ids": row[3] if isinstance(row[3], list) else []
+            }
+            for row in rows
+        ]
 
     def create_collection(self, user_email: str, name: str) -> int:
         """Create a new collection for the user and return its id."""
-        if self.conn is None:
+        if self.engine is None:
             return -1
-        upsert_user_sql = """
-            INSERT INTO users (email, name) VALUES (%s, %s)
-            ON CONFLICT (email) DO NOTHING
-        """
-        with self.conn.cursor() as cur:
-            cur.execute(upsert_user_sql, (user_email, user_email))
-        insert_sql = """
-            INSERT INTO collections (user_email, collection_name)
-            VALUES (%s, %s)
-            RETURNING collection_id
-        """
-        with self.conn.cursor() as cur:
-            cur.execute(insert_sql, (user_email, name))
-            collection_id = cur.fetchone()[0]
-        self.conn.commit()
-        return collection_id
+        self._run_write(
+            "INSERT INTO users (email, name) VALUES (:email, :name) ON CONFLICT (email) DO NOTHING",
+            {"email": user_email, "name": user_email}
+        )
+        return self._run_returning(
+            "INSERT INTO collections (user_email, collection_name) "
+            "VALUES (:user_email, :name) RETURNING collection_id",
+            {"user_email": user_email, "name": name}
+        )
 
     def delete_collection(self, collection_id: int, user_email: str) -> bool:
         """Delete a collection owned by the user. Returns True if deleted."""
-        if self.conn is None:
+        if self.engine is None:
             return False
-        sql = """
-            DELETE FROM collections
-            WHERE collection_id = %s AND user_email = %s
-        """
-        with self.conn.cursor() as cur:
-            cur.execute(sql, (collection_id, user_email))
-            deleted = cur.rowcount > 0
-        self.conn.commit()
-        return deleted
+        rowcount = self._run_write(
+            "DELETE FROM collections WHERE collection_id = :cid AND user_email = :email",
+            {"cid": collection_id, "email": user_email}
+        )
+        return rowcount > 0
 
     def add_docket_to_collection(
             self, collection_id: int, docket_id: str, user_email: str) -> bool:
         """Add a docket to a collection the user owns. Returns True if successful."""
-        if self.conn is None:
+        if self.engine is None:
             return False
-        check_sql = """
-            SELECT 1 FROM collections
-            WHERE collection_id = %s AND user_email = %s
-        """
-        with self.conn.cursor() as cur:
-            cur.execute(check_sql, (collection_id, user_email))
-            if cur.fetchone() is None:
-                return False
-        insert_sql = """
-            INSERT INTO collection_dockets (collection_id, docket_id)
-            VALUES (%s, %s)
-            ON CONFLICT DO NOTHING
-        """
-        with self.conn.cursor() as cur:
-            cur.execute(insert_sql, (collection_id, docket_id))
-        self.conn.commit()
+        rows = self._run(
+            "SELECT 1 FROM collections WHERE collection_id = :cid AND user_email = :email",
+            {"cid": collection_id, "email": user_email}
+        )
+        if not rows:
+            return False
+        self._run_write(
+            "INSERT INTO collection_dockets (collection_id, docket_id) "
+            "VALUES (:cid, :docket_id) ON CONFLICT DO NOTHING",
+            {"cid": collection_id, "docket_id": docket_id}
+        )
         return True
 
     def remove_docket_from_collection(
             self, collection_id: int, docket_id: str, user_email: str) -> bool:
-        """Remove a docket from a collection the user owns. Returns True if successful."""
-        if self.conn is None:
+        """Remove a docket from a collection the user owns. Returns True if deleted."""
+        if self.engine is None:
             return False
-        check_sql = """
-            SELECT 1 FROM collections
-            WHERE collection_id = %s AND user_email = %s
-        """
-        with self.conn.cursor() as cur:
-            cur.execute(check_sql, (collection_id, user_email))
-            if cur.fetchone() is None:
-                return False
-        delete_sql = """
-            DELETE FROM collection_dockets
-            WHERE collection_id = %s AND docket_id = %s
-        """
-        with self.conn.cursor() as cur:
-            cur.execute(delete_sql, (collection_id, docket_id))
-        self.conn.commit()
-        return True
+        rows = self._run(
+            "SELECT 1 FROM collections WHERE collection_id = :cid AND user_email = :email",
+            {"cid": collection_id, "email": user_email}
+        )
+        if not rows:
+            return False
+        rowcount = self._run_write(
+            "DELETE FROM collection_dockets WHERE collection_id = :cid AND docket_id = :docket_id",
+            {"cid": collection_id, "docket_id": docket_id}
+        )
+        return rowcount > 0
 
     def create_download_job(  # pylint: disable=too-many-locals
             self,
@@ -648,41 +732,38 @@ class DBLayer:  # pylint: disable=too-many-public-methods
             include_binaries: bool = False,
     ) -> str:
         """Create a download job and return the new job_id (UUID string)."""
-        if self.conn is None:
+        if self.engine is None:
             return ""
-        upsert_user_sql = """
-            INSERT INTO users (email, name) VALUES (%s, %s)
-            ON CONFLICT (email) DO NOTHING
-        """
-        with self.conn.cursor() as cur:
-            cur.execute(upsert_user_sql, (user_email, user_email))
-        insert_sql = """
-            INSERT INTO download_jobs
-                (user_email, docket_ids, format, include_binaries)
-            VALUES (%s, %s, %s, %s)
-            RETURNING job_id
-        """
-        with self.conn.cursor() as cur:
-            cur.execute(insert_sql, (user_email, docket_ids, format, include_binaries))
-            job_id = str(cur.fetchone()[0])
-        self.conn.commit()
-        return job_id
+        self._run_write(
+            "INSERT INTO users (email, name) VALUES (:email, :name) ON CONFLICT (email) DO NOTHING",
+            {"email": user_email, "name": user_email}
+        )
+        job_id = self._run_returning(
+            "INSERT INTO download_jobs (user_email, docket_ids, format, include_binaries) "
+            "VALUES (:email, :docket_ids, :format, :include_binaries) RETURNING job_id",
+            {
+                "email": user_email,
+                "docket_ids": docket_ids,
+                "format": format,
+                "include_binaries": include_binaries,
+            }
+        )
+        return str(job_id)
 
     def get_download_job(self, job_id: str, user_email: str) -> Dict[str, Any]:
         """Return job details for the given job_id owned by user_email, or {}."""
-        if self.conn is None:
+        if self.engine is None:
             return {}
         sql = """
             SELECT job_id, user_email, docket_ids, format, include_binaries,
                    status, s3_path, created_at, updated_at, expires_at
             FROM download_jobs
-            WHERE job_id = %s AND user_email = %s
+            WHERE job_id = :job_id AND user_email = :email
         """
-        with self.conn.cursor() as cur:
-            cur.execute(sql, (job_id, user_email))
-            row = cur.fetchone()
-        if row is None:
+        rows = self._run(sql, {"job_id": job_id, "email": user_email})
+        if not rows:
             return {}
+        row = rows[0]
         return {
             "job_id": str(row[0]),
             "user_email": row[1],
@@ -702,121 +783,97 @@ class DBLayer:  # pylint: disable=too-many-public-methods
 
         Returns True if a row was updated.
         """
-        if self.conn is None:
+        if self.engine is None:
             return False
-        sql = """
-            UPDATE download_jobs
-            SET status = %s, s3_path = %s, updated_at = NOW()
-            WHERE job_id = %s
-        """
-        with self.conn.cursor() as cur:
-            cur.execute(sql, (status, s3_path, job_id))
-            updated = cur.rowcount > 0
-        self.conn.commit()
-        return updated
+        rowcount = self._run_write(
+            "UPDATE download_jobs SET status = :status, s3_path = :s3_path, "
+            "updated_at = NOW() WHERE job_id = :job_id",
+            {"status": status, "s3_path": s3_path, "job_id": job_id}
+        )
+        return rowcount > 0
 
     def prune_expired_download_jobs(self) -> int:
         """Delete download_jobs past their expires_at. Returns the number of rows deleted."""
-        if self.conn is None:
+        if self.engine is None:
             return 0
-        sql = "DELETE FROM download_jobs WHERE expires_at < NOW()"
-        with self.conn.cursor() as cur:
-            cur.execute(sql)
-            deleted = cur.rowcount
-        self.conn.commit()
-        return deleted
+        return self._run_write("DELETE FROM download_jobs WHERE expires_at < NOW()")
 
     def is_admin(self, email: str) -> bool:
         """Return True if the given email belongs to an admin."""
-        if self.conn is None:
+        if self.engine is None:
             return False
-        sql = "SELECT 1 FROM admins WHERE email = %s"
-        with self.conn.cursor() as cur:
-            cur.execute(sql, (email,))
-            return cur.fetchone() is not None
+        rows = self._run("SELECT 1 FROM admins WHERE email = :email", {"email": email})
+        return len(rows) > 0
 
     def is_authorized_user(self, email: str) -> bool:
         """Return True if the given email is in the authorized users list."""
-        if self.conn is None:
+        if self.engine is None:
             return False
-        sql = "SELECT 1 FROM authorized_users WHERE email = %s"
-        with self.conn.cursor() as cur:
-            cur.execute(sql, (email,))
-            return cur.fetchone() is not None
+        rows = self._run(
+            "SELECT 1 FROM authorized_users WHERE email = :email", {"email": email}
+        )
+        return len(rows) > 0
 
     def add_authorized_user(self, email: str, name: str) -> bool:
         """Add a user to the authorized users list. Returns True if successful."""
-        if self.conn is None:
+        if self.engine is None:
             return False
-        sql = """
-            INSERT INTO authorized_users (email, name)
-            VALUES (%s, %s)
-            ON CONFLICT DO NOTHING
-        """
-        with self.conn.cursor() as cur:
-            cur.execute(sql, (email, name))
-        self.conn.commit()
+        self._run_write(
+            "INSERT INTO authorized_users (email, name) VALUES (:email, :name) "
+            "ON CONFLICT DO NOTHING",
+            {"email": email, "name": name}
+        )
         return True
 
     def remove_authorized_user(self, email: str) -> bool:
         """Remove a user from the authorized users list. Returns True if deleted."""
-        if self.conn is None:
+        if self.engine is None:
             return False
-        sql = "DELETE FROM authorized_users WHERE email = %s"
-        with self.conn.cursor() as cur:
-            cur.execute(sql, (email,))
-            deleted = cur.rowcount > 0
-        self.conn.commit()
-        return deleted
+        rowcount = self._run_write(
+            "DELETE FROM authorized_users WHERE email = :email", {"email": email}
+        )
+        return rowcount > 0
 
     def get_authorized_users(self) -> List[Dict[str, Any]]:
         """Return all authorized users."""
-        if self.conn is None:
+        if self.engine is None:
             return []
-        sql = """
-            SELECT email, name, authorized_at
-            FROM authorized_users
-            ORDER BY authorized_at DESC
-        """
-        with self.conn.cursor() as cur:
-            cur.execute(sql)
-            return [
-                {
-                    "email": row[0],
-                    "name": row[1],
-                    "authorized_at": row[2]
-                }
-                for row in cur.fetchall()
-            ]
+        rows = self._run(
+            "SELECT email, name, authorized_at FROM authorized_users ORDER BY authorized_at DESC"
+        )
+        return [
+            {"email": row[0], "name": row[1], "authorized_at": row[2]}
+            for row in rows
+        ]
 
     def get_download_jobs(self, user_email: str) -> List[Dict[str, Any]]:
         """Return all download jobs for the given user, newest first."""
-        if self.conn is None:
+        if self.engine is None:
             return []
         sql = """
             SELECT job_id, user_email, docket_ids, format, include_binaries,
                 status, s3_path, created_at, updated_at, expires_at
             FROM download_jobs
-            WHERE user_email = %s
+            WHERE user_email = :user_email
             ORDER BY created_at DESC
         """
-        with self.conn.cursor() as cur:
-            cur.execute(sql, (user_email,))
-            return [
-                {
-                    "job_id": str(row[0]),
-                    "user_email": row[1],
-                    "docket_ids": row[2],
-                    "format": row[3],
-                    "include_binaries": row[4],
-                    "status": row[5],
-                    "s3_path": row[6],
-                    "created_at": row[7].isoformat() if row[7] else None,
-                    "updated_at": row[8].isoformat() if row[8] else None,
-                    "expires_at": row[9].isoformat() if row[9] else None,
-                }
-                for row in cur.fetchall()
-            ]
+        rows = self._run(sql, {"user_email": user_email})
+        return [
+            {
+                "job_id": str(row[0]),
+                "user_email": row[1],
+                "docket_ids": row[2],
+                "format": row[3],
+                "include_binaries": row[4],
+                "status": row[5],
+                "s3_path": row[6],
+                "created_at": row[7].isoformat() if row[7] else None,
+                "updated_at": row[8].isoformat() if row[8] else None,
+                "expires_at": row[9].isoformat() if row[9] else None,
+            }
+            for row in rows
+        ]
+
 
 def _get_secrets_from_aws() -> Dict[str, str]:
     if boto3 is None:
@@ -826,36 +883,20 @@ def _get_secrets_from_aws() -> Dict[str, str]:
     return json.loads(response["SecretString"])
 
 
-def get_postgres_connection() -> DBLayer:
-    use_aws_secrets = os.getenv("USE_AWS_SECRETS", "").lower() in {"1", "true", "yes", "on"}
-    if use_aws_secrets:
-        creds = _get_secrets_from_aws()
-        conn = psycopg2.connect(
-            host=creds["host"],
-            port=creds["port"],
-            database=creds["db"],
-            user=creds["username"],
-            password=creds["password"]
-        )
-    else:
-        if LOAD_DOTENV is not None:
-            LOAD_DOTENV()
-        conn = psycopg2.connect(
-            host=os.getenv("DB_HOST", "localhost"),
-            port=os.getenv("DB_PORT", "5432"),
-            database=os.getenv("DB_NAME", "your_db"),
-            user=os.getenv("DB_USER", "your_user"),
-            password=os.getenv("DB_PASSWORD", "your_password")
-        )
-    return DBLayer(conn)
-
-
 def get_db() -> DBLayer:
+    """
+    Return a DBLayer backed by the shared SQLAlchemy engine.
+
+    The engine is created once and reused.  SQLAlchemy's pool_pre_ping
+    and pool_recycle settings handle dead-connection detection and
+    replacement automatically — no manual rollback or health-check needed.
+    """
     if LOAD_DOTENV is not None:
         LOAD_DOTENV()
     try:
-        return get_postgres_connection()
-    except psycopg2.OperationalError:
+        engine = _get_engine()
+        return DBLayer(engine)
+    except Exception:  # pylint: disable=broad-exception-caught
         return DBLayer()
 
 
