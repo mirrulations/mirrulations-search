@@ -1,4 +1,4 @@
-# pylint: disable=redefined-outer-name,protected-access
+# pylint: disable=redefined-outer-name,protected-access,duplicate-code
 import uuid
 from datetime import datetime, timezone
 import pytest
@@ -6,20 +6,10 @@ import mirrsearch.db as db_module
 from mirrsearch.db import DBLayer, _env_flag_true, _parse_positive_int_env
 
 
-class _FakeCursor:
-    def __init__(self, rows=None):
-        self._rows = rows or []
-        self.executed = []  # Store tuples of (sql, params) for each execution
-        self.rowcount = len(self._rows)
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *_):
-        return False
-
-    def execute(self, sql, params=None):
-        self.executed.append((sql, params))
+class _FakeResult:
+    def __init__(self, rows, rowcount=None):
+        self._rows = rows
+        self.rowcount = rowcount if rowcount is not None else len(rows)
 
     def fetchall(self):
         return self._rows
@@ -27,69 +17,54 @@ class _FakeCursor:
     def fetchone(self):
         return self._rows[0] if self._rows else None
 
-    def close(self):
-        pass
 
+class _FakeConnection:
+    """Single connection context that records executions and returns canned rows."""
+    def __init__(self, engine):
+        self._engine = engine
 
-class _FakeConn:
-    def __init__(self, rows=None, fetchone_rows=None):
-        self._rows = rows or []
-        self._fetchone_rows = fetchone_rows
-        self.cursor_obj = _FakeCursor(rows)
-        self.committed = False
-
-    def cursor(self):
-        # Return the same cursor object each time to maintain state
-        return self.cursor_obj
-
-    def commit(self):
-        self.committed = True
-
-    def close(self):
-        pass
-
-
-class _TrackingConn:
-    """Conn that records all cursor executions across multiple cursor() calls."""
-    def __init__(self, rows_per_call=None):
-        self.calls = []
-        self._rows_per_call = rows_per_call or {}
-        self.committed = False
-
-    def cursor(self):
-        return _TrackingCursor(self)
-
-    def commit(self):
-        self.committed = True
-
-
-class _TrackingCursor:
-    def __init__(self, conn):
-        self._conn = conn
-        self._sql = None
-        self._params = None
-        self.rowcount = 0
+    def execute(self, stmt, params=None):
+        sql = stmt.text if hasattr(stmt, "text") else str(stmt)
+        call_num = len(self._engine.calls) + 1
+        self._engine.calls.append((sql, params or {}))
+        rows = self._engine._rows_per_call.get(call_num, self._engine._default_rows)
+        rowcount = self._engine._rowcount_per_call.get(call_num, self._engine._default_rowcount)
+        return _FakeResult(rows, rowcount)
 
     def __enter__(self):
         return self
 
     def __exit__(self, *_):
-        return False
-
-    def execute(self, sql, params=None):
-        self._sql = sql
-        self._params = params
-        self._conn.calls.append((sql, params))
-
-    def fetchall(self):
-        return self._conn._rows_per_call.get(len(self._conn.calls), [])
-
-    def fetchone(self):
-        rows = self._conn._rows_per_call.get(len(self._conn.calls), [])
-        return rows[0] if rows else None
-
-    def close(self):
         pass
+
+
+class _FakeEngine:
+    """Minimal fake SQLAlchemy engine for testing."""
+    def __init__(self, rows=None, rowcount=None, rows_per_call=None, rowcount_per_call=None):
+        self._default_rows = rows or []
+        self._default_rowcount = rowcount if rowcount is not None else len(self._default_rows)
+        self._rows_per_call = rows_per_call or {}
+        self._rowcount_per_call = rowcount_per_call or {}
+        self.calls = []
+        self.committed = False
+
+    def connect(self):
+        return _FakeConnection(self)
+
+    def begin(self):
+        conn = _FakeConnection(self)
+        self.committed = True
+        return conn
+
+
+def _FakeConn(rows=None, rowcount=None):  # pylint: disable=invalid-name
+    """Compatibility shim — returns _FakeEngine."""
+    return _FakeEngine(rows=rows or [], rowcount=rowcount)
+
+
+def _TrackingConn(rows_per_call=None, rowcount_per_call=None):  # pylint: disable=invalid-name
+    """Compatibility shim for multi-call tracking."""
+    return _FakeEngine(rows_per_call=rows_per_call or {}, rowcount_per_call=rowcount_per_call or {})
 
 
 # Helper function to avoid duplicate code
@@ -165,65 +140,65 @@ def test_get_cfr_docket_ids_returns_empty_when_no_conn():
 
 
 def test_get_cfr_docket_ids_returns_empty_for_empty_pairs():
-    db = DBLayer(conn=_FakeConn([]))
+    db = DBLayer(engine=_FakeConn([]))
     assert db._get_cfr_docket_ids([]) == set()
 
 
 def test_get_cfr_docket_ids_queries_correct_table():
     conn = _TrackingConn(rows_per_call={1: [("DOC-001",), ("DOC-002",)]})
-    db = DBLayer(conn=conn)
+    db = DBLayer(engine=conn)
     result = db._get_cfr_docket_ids([("Title 42", "413")])
     sql, params = conn.calls[0]
-    assert "documentsWithFRdoc" in sql
+    assert "documents" in sql
     assert "cfrparts" in sql
-    assert "cp.title = %s" in sql
-    assert "cp.cfrPart = %s" in sql
-    assert "Title 42" in params
-    assert "413" in params
+    assert "cp.title = :title_" in sql
+    assert "cp.cfrPart = :part_" in sql
+    assert params.get("title_0") == "Title 42"
+    assert params.get("part_0") == "413"
     assert result == {"DOC-001", "DOC-002"}
 
 
 def test_get_cfr_docket_ids_multiple_pairs():
     conn = _TrackingConn(rows_per_call={1: [("DOC-001",)]})
-    db = DBLayer(conn=conn)
+    db = DBLayer(engine=conn)
     db._get_cfr_docket_ids([("Title 42", "413"), ("Title 40", "80")])
     sql, params = conn.calls[0]
-    assert sql.count("cp.title = %s") == 2
-    assert "Title 42" in params
-    assert "413" in params
-    assert "Title 40" in params
-    assert "80" in params
+    assert sql.count("cp.title = :title_") == 2
+    assert params.get("title_0") == "Title 42"
+    assert params.get("part_0") == "413"
+    assert params.get("title_1") == "Title 40"
+    assert params.get("part_1") == "80"
 
 
 # --- date filters in _search_dockets_postgres ---
 
 def test_search_dockets_postgres_start_date_filter():
-    db = DBLayer(conn=_FakeConn([]))
+    db = DBLayer(engine=_FakeConn([]))
     db._search_dockets_postgres("test", start_date="2025-01-01")
-    assert len(db.conn.cursor_obj.executed) > 0, "No SQL was executed"
-    sql, params = db.conn.cursor_obj.executed[0]
-    assert "d.modify_date::date >= %s::date" in sql
-    assert "2025-01-01" in params
+    assert len(db.engine.calls) > 0, "No SQL was executed"
+    sql, params = db.engine.calls[0]
+    assert "d.modify_date::date >= :start_date::date" in sql
+    assert params.get("start_date") == "2025-01-01"
 
 
 def test_search_dockets_postgres_end_date_filter():
-    db = DBLayer(conn=_FakeConn([]))
+    db = DBLayer(engine=_FakeConn([]))
     db._search_dockets_postgres("test", end_date="2026-01-01")
-    assert len(db.conn.cursor_obj.executed) > 0, "No SQL was executed"
-    sql, params = db.conn.cursor_obj.executed[0]
-    assert "d.modify_date::date <= %s::date" in sql
-    assert "2026-01-01" in params
+    assert len(db.engine.calls) > 0, "No SQL was executed"
+    sql, params = db.engine.calls[0]
+    assert "d.modify_date::date <= :end_date::date" in sql
+    assert params.get("end_date") == "2026-01-01"
 
 
 def test_search_dockets_postgres_both_dates():
-    db = DBLayer(conn=_FakeConn([]))
+    db = DBLayer(engine=_FakeConn([]))
     db._search_dockets_postgres("test", start_date="2025-01-01", end_date="2026-01-01")
-    assert len(db.conn.cursor_obj.executed) > 0, "No SQL was executed"
-    sql, params = db.conn.cursor_obj.executed[0]
-    assert "d.modify_date::date >= %s::date" in sql
-    assert "d.modify_date::date <= %s::date" in sql
-    assert "2025-01-01" in params
-    assert "2026-01-01" in params
+    assert len(db.engine.calls) > 0, "No SQL was executed"
+    sql, params = db.engine.calls[0]
+    assert "d.modify_date::date >= :start_date::date" in sql
+    assert "d.modify_date::date <= :end_date::date" in sql
+    assert params.get("start_date") == "2025-01-01"
+    assert params.get("end_date") == "2026-01-01"
 
 
 # --- collection methods ---
@@ -234,7 +209,7 @@ def test_get_collections_no_conn_returns_empty():
 
 def test_get_collections_returns_rows():
     rows = [(1, "My Collection", "user@example.com", ["DOC-001"])]
-    db = DBLayer(conn=_FakeConn(rows))
+    db = DBLayer(engine=_FakeConn(rows))
     result = db.get_collections("user@example.com")
     assert len(result) == 1
     assert result[0]["collection_id"] == 1
@@ -244,7 +219,7 @@ def test_get_collections_returns_rows():
 
 def test_get_collections_non_list_docket_ids_returns_empty_list():
     rows = [(1, "My Collection", "user@example.com", None)]
-    db = DBLayer(conn=_FakeConn(rows))
+    db = DBLayer(engine=_FakeConn(rows))
     result = db.get_collections("user@example.com")
     assert result[0]["docket_ids"] == []
 
@@ -255,7 +230,7 @@ def test_create_collection_no_conn_returns_minus_one():
 
 def test_create_collection_returns_new_id():
     conn = _TrackingConn(rows_per_call={2: [(42,)]})
-    db = DBLayer(conn=conn)
+    db = DBLayer(engine=conn)
     result = db.create_collection("user@example.com", "My Collection")
     assert result == 42
     assert conn.committed is True
@@ -266,47 +241,15 @@ def test_delete_collection_no_conn_returns_false():
 
 
 def test_delete_collection_returns_true_when_deleted():
-    class DeleteCursor(_FakeCursor):
-        def __init__(self):
-            super().__init__([])
-            self.rowcount = 1
-
-    class DeleteConn:
-        def __init__(self):
-            self.cursor_obj = DeleteCursor()
-            self.committed = False
-
-        def cursor(self):
-            return self.cursor_obj
-
-        def commit(self):
-            self.committed = True
-
-    conn = DeleteConn()
-    db = DBLayer(conn=conn)
+    conn = _FakeEngine([], rowcount=1)
+    db = DBLayer(engine=conn)
     assert db.delete_collection(1, "user@example.com") is True
     assert conn.committed is True
 
 
 def test_delete_collection_returns_false_when_not_found():
-    class DeleteCursor(_FakeCursor):
-        def __init__(self):
-            super().__init__([])
-            self.rowcount = 0
-
-    class DeleteConn:
-        def __init__(self):
-            self.cursor_obj = DeleteCursor()
-            self.committed = False
-
-        def cursor(self):
-            return self.cursor_obj
-
-        def commit(self):
-            self.committed = True
-
-    conn = DeleteConn()
-    db = DBLayer(conn=conn)
+    conn = _FakeEngine([], rowcount=0)
+    db = DBLayer(engine=conn)
     assert db.delete_collection(99, "user@example.com") is False
 
 
@@ -316,7 +259,7 @@ def test_add_docket_to_collection_no_conn_returns_false():
 
 def test_add_docket_to_collection_wrong_owner_returns_false():
     conn = _TrackingConn(rows_per_call={1: []})
-    db = DBLayer(conn=conn)
+    db = DBLayer(engine=conn)
     result = db.add_docket_to_collection(1, "DOC-001", "other@example.com")
     assert result is False
     assert conn.committed is False
@@ -324,7 +267,7 @@ def test_add_docket_to_collection_wrong_owner_returns_false():
 
 def test_add_docket_to_collection_success():
     conn = _TrackingConn(rows_per_call={1: [(1,)], 2: []})
-    db = DBLayer(conn=conn)
+    db = DBLayer(engine=conn)
     result = db.add_docket_to_collection(1, "DOC-001", "user@example.com")
     assert result is True
     assert conn.committed is True
@@ -338,15 +281,15 @@ def test_remove_docket_from_collection_no_conn_returns_false():
 
 def test_remove_docket_from_collection_wrong_owner_returns_false():
     conn = _TrackingConn(rows_per_call={1: []})
-    db = DBLayer(conn=conn)
+    db = DBLayer(engine=conn)
     result = db.remove_docket_from_collection(1, "DOC-001", "other@example.com")
     assert result is False
     assert conn.committed is False
 
 
 def test_remove_docket_from_collection_success():
-    conn = _TrackingConn(rows_per_call={1: [(1,)], 2: []})
-    db = DBLayer(conn=conn)
+    conn = _TrackingConn(rows_per_call={1: [(1,)]}, rowcount_per_call={2: 1})
+    db = DBLayer(engine=conn)
     result = db.remove_docket_from_collection(1, "DOC-001", "user@example.com")
     assert result is True
     assert conn.committed is True
@@ -366,7 +309,7 @@ def test_boto3_none_branch_covered(monkeypatch):
 def test_load_dotenv_none_branch_covered(monkeypatch):
     """get_db with LOAD_DOTENV=None should not crash — covers line 15-16."""
     monkeypatch.setattr(db_module, "LOAD_DOTENV", None)
-    monkeypatch.setattr(db_module, "get_postgres_connection", DBLayer)
+    monkeypatch.setattr(db_module, "_get_engine", lambda: _FakeEngine([]))
     result = db_module.get_db()
     assert isinstance(result, DBLayer)
 
@@ -417,7 +360,7 @@ def test_create_download_job_no_conn_returns_empty_string():
 def test_create_download_job_returns_job_id():
     fake_uuid = uuid.UUID("12345678-1234-5678-1234-567812345678")
     conn = _TrackingConn(rows_per_call={2: [(fake_uuid,)]})
-    db = DBLayer(conn=conn)
+    db = DBLayer(engine=conn)
     result = db.create_download_job("user@example.com", ["DOC-001", "DOC-002"])
     assert result == str(fake_uuid)
     assert conn.committed is True
@@ -426,7 +369,7 @@ def test_create_download_job_returns_job_id():
 def test_create_download_job_upserts_user_first():
     fake_uuid = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
     conn = _TrackingConn(rows_per_call={2: [(fake_uuid,)]})
-    db = DBLayer(conn=conn)
+    db = DBLayer(engine=conn)
     db.create_download_job("user@example.com", ["DOC-001"])
     first_sql = conn.calls[0][0]
     assert "INSERT INTO users" in first_sql
@@ -436,21 +379,24 @@ def test_create_download_job_upserts_user_first():
 def test_create_download_job_inserts_correct_values():
     fake_uuid = uuid.UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
     conn = _TrackingConn(rows_per_call={2: [(fake_uuid,)]})
-    db = DBLayer(conn=conn)
+    db = DBLayer(engine=conn)
     db.create_download_job("user@example.com", ["DOC-001"], format="csv", include_binaries=True)
     insert_sql, params = conn.calls[1]
     assert "INSERT INTO download_jobs" in insert_sql
-    assert params == ("user@example.com", ["DOC-001"], "csv", True)
+    assert params.get("email") == "user@example.com"
+    assert params.get("docket_ids") == ["DOC-001"]
+    assert params.get("format") == "csv"
+    assert params.get("include_binaries") is True
 
 
 def test_create_download_job_defaults():
     fake_uuid = uuid.UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
     conn = _TrackingConn(rows_per_call={2: [(fake_uuid,)]})
-    db = DBLayer(conn=conn)
+    db = DBLayer(engine=conn)
     db.create_download_job("user@example.com", ["DOC-001"])
     _, params = conn.calls[1]
-    assert params[2] == "zip"
-    assert params[3] is False
+    assert params.get("format") == "zip"
+    assert params.get("include_binaries") is False
 
 
 def test_get_download_job_no_conn_returns_empty_dict():
@@ -459,7 +405,7 @@ def test_get_download_job_no_conn_returns_empty_dict():
 
 def test_get_download_job_not_found_returns_empty_dict():
     conn = _TrackingConn(rows_per_call={1: []})
-    db = DBLayer(conn=conn)
+    db = DBLayer(engine=conn)
     result = db.get_download_job("missing-uuid", "user@example.com")
     assert not result
 
@@ -469,7 +415,7 @@ def test_get_download_job_returns_correct_fields():
     now = datetime.now(timezone.utc)
     row = (job_id, "user@example.com", ["DOC-001"], "zip", False, "pending", None, now, now, now)
     conn = _TrackingConn(rows_per_call={1: [row]})
-    db = DBLayer(conn=conn)
+    db = DBLayer(engine=conn)
     result = db.get_download_job(str(job_id), "user@example.com")
     assert result["job_id"] == str(job_id)
     assert result["user_email"] == "user@example.com"
@@ -482,75 +428,43 @@ def test_get_download_job_returns_correct_fields():
 
 def test_get_download_job_enforces_user_ownership():
     conn = _TrackingConn(rows_per_call={1: []})
-    db = DBLayer(conn=conn)
+    db = DBLayer(engine=conn)
     result = db.get_download_job("some-uuid", "other@example.com")
     assert not result
     sql, params = conn.calls[0]
     assert "user_email" in sql
-    assert "other@example.com" in params
+    assert params.get("email") == "other@example.com"
 
 
 def test_update_download_job_status_no_conn_returns_false():
-    assert DBLayer().update_download_job_status("some-uuid", "complete") is False
+    assert DBLayer().update_download_job_status("some-uuid", "ready") is False
 
 
 def test_update_download_job_status_returns_true_when_updated():
-    class RowcountCursor(_FakeCursor):
-        def __init__(self):
-            super().__init__([])
-            self.rowcount = 1
-
-    class RowcountConn:
-        def __init__(self):
-            self.cursor_obj = RowcountCursor()
-            self.committed = False
-
-        def cursor(self):
-            return self.cursor_obj
-
-        def commit(self):
-            self.committed = True
-
-    conn = RowcountConn()
-    db = DBLayer(conn=conn)
-    result = db.update_download_job_status("some-uuid", "complete", s3_path="s3://bucket/file.zip")
+    conn = _FakeEngine([], rowcount=1)
+    db = DBLayer(engine=conn)
+    result = db.update_download_job_status("some-uuid", "ready", s3_path="s3://bucket/file.zip")
     assert result is True
     assert conn.committed is True
 
 
 def test_update_download_job_status_returns_false_when_not_found():
-    class RowcountCursor(_FakeCursor):
-        def __init__(self):
-            super().__init__([])
-            self.rowcount = 0
-
-    class RowcountConn:
-        def __init__(self):
-            self.cursor_obj = RowcountCursor()
-            self.committed = False
-
-        def cursor(self):
-            return self.cursor_obj
-
-        def commit(self):
-            self.committed = True
-
-    conn = RowcountConn()
-    db = DBLayer(conn=conn)
-    result = db.update_download_job_status("missing-uuid", "complete")
+    conn = _FakeEngine([], rowcount=0)
+    db = DBLayer(engine=conn)
+    result = db.update_download_job_status("missing-uuid", "ready")
     assert result is False
 
 
 def test_update_download_job_status_sets_correct_params():
     conn = _TrackingConn(rows_per_call={})
-    db = DBLayer(conn=conn)
+    db = DBLayer(engine=conn)
     db.update_download_job_status("my-uuid", "processing", s3_path=None)
     sql, params = conn.calls[0]
     assert "UPDATE download_jobs" in sql
     assert "status" in sql
-    assert params[0] == "processing"
-    assert params[1] is None
-    assert params[2] == "my-uuid"
+    assert params.get("status") == "processing"
+    assert params.get("s3_path") is None
+    assert params.get("job_id") == "my-uuid"
 
 
 def test_prune_expired_download_jobs_no_conn_returns_zero():
@@ -558,24 +472,8 @@ def test_prune_expired_download_jobs_no_conn_returns_zero():
 
 
 def test_prune_expired_download_jobs_returns_deleted_count():
-    class PruneCursor(_FakeCursor):
-        def __init__(self):
-            super().__init__([])
-            self.rowcount = 5
-
-    class PruneConn:
-        def __init__(self):
-            self.cursor_obj = PruneCursor()
-            self.committed = False
-
-        def cursor(self):
-            return self.cursor_obj
-
-        def commit(self):
-            self.committed = True
-
-    conn = PruneConn()
-    db = DBLayer(conn=conn)
+    conn = _FakeEngine([], rowcount=5)
+    db = DBLayer(engine=conn)
     result = db.prune_expired_download_jobs()
     assert result == 5
     assert conn.committed is True
@@ -583,7 +481,7 @@ def test_prune_expired_download_jobs_returns_deleted_count():
 
 def test_prune_expired_download_jobs_uses_correct_sql():
     conn = _TrackingConn(rows_per_call={})
-    db = DBLayer(conn=conn)
+    db = DBLayer(engine=conn)
     db.prune_expired_download_jobs()
     sql, _params = conn.calls[0]
     assert "DELETE FROM download_jobs" in sql

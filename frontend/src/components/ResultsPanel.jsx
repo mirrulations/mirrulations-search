@@ -1,6 +1,7 @@
 import {ColorRing} from 'react-loader-spinner'
 import { useState } from "react";
 import CollectionModal from "./CollectionModal";
+import DownloadModal from '../pages/DownloadModal';
 
 const ECFR_URL = "https://www.ecfr.gov";
 const MAX_VOLUME = 10000;
@@ -25,6 +26,7 @@ function scoreResult(item) {
 export default function ResultsPanel({ results, loading, hasSearched, query, unauthorized }) {
 
  const [modalDocketId, setModalDocketId] = useState(null);
+ const [downloadDocketId, setDownloadDocketId] = useState(null)
 
  if (unauthorized) {
    return (
@@ -68,6 +70,16 @@ export default function ResultsPanel({ results, loading, hasSearched, query, una
       onClose={() => setModalDocketId(null)}
     />
   )}
+
+    {/* Download modal for a single docket */}
+    {downloadDocketId && (
+    <DownloadModal
+        collectionName={null}
+        docketIds={[downloadDocketId]}
+        onClose={() => setDownloadDocketId(null)}
+      />
+    )}
+
      <p className="results-summary">
        Showing results for "<strong>{query}</strong>" • {results.length} docket{results.length !== 1 ? "s" : ""} found
      </p>
@@ -103,7 +115,14 @@ export default function ResultsPanel({ results, loading, hasSearched, query, una
                  <p className="result-summary">{item.summary}</p>
                )}
             </div>
-            <button className="btn-add-collection" onClick={() => setModalDocketId(item.docket_id)}>Add to Collection</button>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 8 }}>
+              <button className="btn-add-collection" onClick={() => setModalDocketId(item.docket_id)}>
+                Add to Collection
+              </button>
+              <button className="btn-add-collection" onClick={() => setDownloadDocketId(item.docket_id)}>
+                Download
+              </button>
+            </div>
           </div>
         </div>
      ))}

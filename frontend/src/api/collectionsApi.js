@@ -1,12 +1,12 @@
 export async function getCollections() { // Gets all the current collections
-    const response = await fetch("/collections");
+    const response = await fetch("/api/collections");
     if (response.status === 401) throw new Error("UNAUTHORIZED");
     if (!response.ok) throw new Error(`Failed to fetch collections: ${response.status}`);
     return response.json();
 }
 
 export async function createCollection(name) { // Creates a new collection with the given name
-    const response = await fetch("/collections", {
+    const response = await fetch("/api/collections", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name }),
@@ -17,7 +17,7 @@ export async function createCollection(name) { // Creates a new collection with 
 }
 
 export async function addDocketToCollection(collectionId, docketId) { // Adds a docket to a specific collection
-    const response = await fetch(`/collections/${collectionId}/dockets`, {
+    const response = await fetch(`/api/collections/${collectionId}/dockets`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ docket_id: docketId }),
@@ -27,7 +27,7 @@ export async function addDocketToCollection(collectionId, docketId) { // Adds a 
 }
 
 export async function deleteCollection(collectionId) {
-    const response = await fetch(`/collections/${collectionId}`, {
+    const response = await fetch(`/api/collections/${collectionId}`, {
         method: "DELETE",
     });
     if (response.status === 401) throw new Error("UNAUTHORIZED");
@@ -35,7 +35,7 @@ export async function deleteCollection(collectionId) {
 }
 
 export async function removeDocketFromCollection(collectionId, docketId) {
-    const response = await fetch(`/collections/${collectionId}/dockets/${encodeURIComponent(docketId)}`, {
+    const response = await fetch(`/api/collections/${collectionId}/dockets/${encodeURIComponent(docketId)}`, {
         method: "DELETE",
     });
     if (response.status === 401) throw new Error("UNAUTHORIZED");
@@ -54,7 +54,7 @@ export async function getDocketsByIds(docketIds) {
 export async function getCollectionDockets(collectionId, page = 1) {
     const params = new URLSearchParams();
     params.append("page", page);
-    const response = await fetch(`/collections/${collectionId}/dockets?${params.toString()}`);
+    const response = await fetch(`/api/collections/${collectionId}/dockets?${params.toString()}`);
     if (response.status === 401) throw new Error("UNAUTHORIZED");
     if (!response.ok) throw new Error(`Failed to fetch collection dockets: ${response.status}`);
 
@@ -68,4 +68,11 @@ export async function getCollectionDockets(collectionId, page = 1) {
         hasPrev: response.headers.get("X-Has-Prev") === "true",
     };
     return { results, pagination };
+}
+
+export async function getDownloadJobs() {
+    const response = await fetch("/download/jobs");
+    if (response.status === 401) throw new Error("UNAUTHORIZED");
+    if (!response.ok) throw new Error(`Failed to fetch download jobs: ${response.status}`);
+    return response.json();
 }

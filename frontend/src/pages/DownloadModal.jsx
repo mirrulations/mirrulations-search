@@ -18,11 +18,6 @@ const PACKAGE_OPTIONS = [
     description: "Public comment text submitted on dockets",
   },
   {
-    id: "attachments",
-    label: "Attachments & binary files",
-    description: "PDFs, Word docs, images uploaded with comments or documents",
-  },
-  {
     id: "extracted_text",
     label: "Extracted text",
     description: "Plain-text extraction from binary files (where available)",
@@ -30,7 +25,7 @@ const PACKAGE_OPTIONS = [
 ];
 
 const FORMAT_OPTIONS = [
-  { id: "Raw", label: "RAW" },
+  { id: "raw", label: "RAW" },
   { id: "csv", label: "CSV" },
 ];
 
@@ -41,6 +36,7 @@ export default function DownloadModal({ collectionName, docketIds, onClose }) {
   const [jobId, setJobId] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
+  const [message, setMessage] = useState(null);
  
   const isAll = !docketIds || docketIds.length === 0;
  
@@ -51,11 +47,19 @@ export default function DownloadModal({ collectionName, docketIds, onClose }) {
         const res = await fetch(`/download/status/${jobId}`);
         if (res.status === 401) {
           clearInterval(pollId);
+          setError("Your session expired. Please log in again.");
           return;
+        }
+        if (!res.ok) {
+          throw new Error(`Polling failed: ${res.status}`);
         }
         const data = await res.json();
         if (data.status === "ready") {
           setStatus("ready");
+          clearInterval(pollId);
+        } else if (data.status === "failed") {
+          setStatus(null);
+          setError("Failed to prepare download.");
           clearInterval(pollId);
         }
       } catch (err) {
@@ -77,6 +81,8 @@ const handleDownload = async () => {
   if (selected.size === 0) return;
   setError(null);
   setSubmitting(true);
+  setMessage(null);
+
   try {
     const response = await fetch("/download/request", {
       method: "POST",
@@ -84,16 +90,23 @@ const handleDownload = async () => {
       body: JSON.stringify({
         docket_ids: docketIds,
         format,
-        include_binaries: selected.has("attachments"),
+        include_binaries: selected.has("extracted_text"),
       }),
     });
     if (response.status === 401) throw new Error("UNAUTHORIZED");
-    if (!response.ok) throw new Error(`Request failed: ${response.status}`);
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || `Request failed: ${response.status}`);
+    }
     const data = await response.json();
     setJobId(data.job_id);
     setStatus("pending");
   } catch (err) {
-    setError("Failed to request download. Please try again.");
+    if (err.message === "UNAUTHORIZED") {
+      setError("Your session expired. Please log in again.");
+    } else {
+      setError(err.message || "Failed to request download.");
+    }
   } finally {
     setSubmitting(false);
   }
@@ -132,6 +145,24 @@ const handleDownload = async () => {
     return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
+
+      <div className="modal-header">
+        <button
+          onClick={onClose}
+          style={{
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+            color: "#aaa",
+            fontSize: 20,
+            lineHeight: 1,
+            padding: "2px 4px",
+          }}
+          aria-label="Close"
+        >
+          ✕
+        </button>
+      </div>
  
         <h2 className="modal-title">
           {isAll
@@ -139,12 +170,13 @@ const handleDownload = async () => {
             : `Download ${docketIds.length} selected docket${docketIds.length !== 1 ? "s" : ""}`}
         </h2>
  
-        {error && <p className="modal-error">{error}</p>}
+        {message && <p className="modal-message">{message}</p>}
+        {error && <p className="modal-message">{error}</p>}
  
         {/* ── Pending ───────────────────────────────── */}
         {status === "pending" && (
           <p className="modal-loading">
-            Package is being prepared — this may take a few minutes.
+            Package is being prepared — this may take a few minutes. Please click "Check Downloads" to see the status of your download!
           </p>
         )}
  

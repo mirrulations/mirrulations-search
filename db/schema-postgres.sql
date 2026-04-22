@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS dockets (
 -- Stores document metadata; references dockets
 -- When a new document is added then a column in the CFR part table should be added
 
-CREATE TABLE IF NOT EXISTS documentsWithFRdoc (
+CREATE TABLE IF NOT EXISTS documents (
     document_id VARCHAR(50) NOT NULL PRIMARY KEY,
     docket_id VARCHAR(50) NOT NULL,
     document_api_link VARCHAR(2000) NOT NULL UNIQUE,
@@ -92,7 +92,7 @@ CREATE TABLE IF NOT EXISTS documentsWithFRdoc (
 CREATE TABLE IF NOT EXISTS comments (
     comment_id VARCHAR(50) NOT NULL PRIMARY KEY,
     api_link VARCHAR(2000) NOT NULL UNIQUE,
-    document_id VARCHAR(50) REFERENCES documentsWithFRdoc(document_id),
+    document_id VARCHAR(50) REFERENCES documents(document_id),
     duplicate_comment_count INT DEFAULT 0 NOT NULL,
     address1 VARCHAR(200),
     address2 VARCHAR(200),
@@ -187,7 +187,8 @@ CREATE TABLE IF NOT EXISTS federal_register_documents (
 
 CREATE TABLE IF NOT EXISTS users (
     email VARCHAR(320) NOT NULL PRIMARY KEY,
-    name VARCHAR(200) NOT NULL
+    name VARCHAR(200) NOT NULL,
+    last_login TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
 -- =========================================
@@ -216,8 +217,8 @@ CREATE TABLE IF NOT EXISTS collection_dockets (
 -- DOWNLOAD JOBS TABLE
 -- =========================================
 -- Tracks async download requests submitted by users.
--- status: 'pending' | 'processing' | 'complete' | 'failed'
--- s3_path: set once the archive is uploaded to S3 (NULL until complete)
+-- status: 'pending' | 'processing' | 'ready' | 'failed'
+-- s3_path: set once the archive is uploaded to S3 (NULL until ready)
 -- expires_at: used by prune_expired_download_jobs to clean up old records
 
 CREATE TABLE IF NOT EXISTS download_jobs (
@@ -233,3 +234,27 @@ CREATE TABLE IF NOT EXISTS download_jobs (
     expires_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW() + INTERVAL '7 days'
 );
 
+-- =========================================
+-- ADMINS TABLE
+-- =========================================
+-- Stores admin users who can manage authorized users
+-- Hardcoded to professor only
+-- Must exist in users table first due to foreign key reference
+
+CREATE TABLE IF NOT EXISTS admins (
+    email VARCHAR(320) NOT NULL PRIMARY KEY REFERENCES users(email),
+    name VARCHAR(200) NOT NULL
+);
+
+-- =========================================
+-- AUTHORIZED USERS TABLE
+-- =========================================
+-- Stores users authorized to access dev.mirrulations.org
+-- Managed by admin to grant access without going through Google OAuth
+-- Users can be removed by deleting their row from this table
+
+CREATE TABLE IF NOT EXISTS authorized_users (
+    email VARCHAR(320) NOT NULL PRIMARY KEY,
+    name VARCHAR(200) NOT NULL,
+    authorized_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);

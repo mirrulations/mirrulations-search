@@ -125,6 +125,40 @@
     border-left: none;
     transform: rotate(45deg);
   }
+
+  .modal-collection-row--disabled {
+    cursor: not-allowed;
+    opacity: 0.72;
+  }
+
+  .modal-collection-row--disabled .modal-collection-name {
+    background: #9ca3af;
+    color: #f9fafb;
+  }
+
+  .modal-collection-row--disabled:hover .modal-collection-name {
+    background: #9ca3af;
+  }
+
+  .modal-collection-row--disabled input[type="checkbox"] {
+    cursor: not-allowed;
+    border-color: #d1d5db;
+    background: #e5e7eb;
+  }
+
+  .modal-collection-row--disabled input[type="checkbox"]:checked {
+    background: #9ca3af;
+    border-color: #9ca3af;
+  }
+
+  .modal-collection-badge {
+    display: block;
+    margin-top: 6px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.92);
+    letter-spacing: 0.01em;
+  }
   
   .modal-actions {
     display: flex;
@@ -132,6 +166,22 @@
     justify-content: space-between;
     margin-top: 0.5rem;
     gap: 0.75rem;
+  }
+
+  .modal-manage-collections {
+    text-align: center;
+    margin-top: 0.75rem;
+    font-size: 0.9rem;
+  }
+
+  .modal-manage-collections a {
+    color: #5b4fcf;
+    font-weight: 600;
+    text-decoration: none;
+  }
+
+  .modal-manage-collections a:hover {
+    text-decoration: underline;
   }
   
   .modal-btn-create {
@@ -166,6 +216,12 @@
     cursor: pointer;
     transition: background 0.15s ease, opacity 0.15s ease;
     margin-left: auto;
+  }
+
+  .modal-btn-add-small {
+    font-size: 0.85rem;
+    padding: 0.45rem 1.2rem;
+    border-radius: 50px;
   }
   
   .modal-btn-add:hover:not(:disabled) {
@@ -211,7 +267,7 @@
     color: #888;
   }
   
-  .modal-error {
+  .modal-message {
     color: #e53e3e;
     font-size: 0.9rem;
     text-align: center;

@@ -1,19 +1,22 @@
 import { useMemo, useState, useEffect } from "react";
-import { Routes, Route, Navigate, Link, useLocation } from "react-router-dom";
+import { Routes, Route, Navigate } from "react-router-dom";
 import Login from "./pages/Login";
+import Home from "./pages/Home";
+import PrivacyPolicy from "./pages/PrivacyPolicy";
 import Collections from "./pages/Collections";
+import Admin from "./pages/Admin";
 import "./styles/app.css";
 import { searchDockets, getAuthStatus } from "./api/searchApi";
 import AdvancedSidebar from "./components/AdvancedSidebar";
 import SearchBar from "./components/SearchBar";
 import ResultsPanel from "./components/ResultsPanel";
 import { motion } from "motion/react";
-import { ArrowLeftIcon, ArrowRightIcon, BooksIcon } from "@phosphor-icons/react";
+import { ArrowLeftIcon, ArrowRightIcon } from "@phosphor-icons/react";
+import SiteNavbar from "./components/SiteNavbar";
+import DownloadStatusModal from "./components/DownloadStatusModal";
 
 
 export default function App() {
-  const location = useLocation();
-  const onCollectionsPage = location.pathname === "/collections";
   const [query, setQuery] = useState("");
   const [docType, setDocType] = useState("");
   const [results, setResults] = useState([]);
@@ -31,6 +34,9 @@ export default function App() {
   const [unauthorized, setUnauthorized] = useState(false);
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
+  const [openDownloadStatus, setOpenDownloadStatus] = useState(null);
+  /** Passed as GET /search/?sort_by= (empty = server default relevance) */
+  const [searchSortBy, setSearchSortBy] = useState("");
 
   useEffect(() => {
     getAuthStatus().then((data) => {
@@ -68,7 +74,8 @@ export default function App() {
     status.size +
     Object.values(selectedCfrParts).reduce((sum, set) => sum + set.size, 0);
 
-  const runSearch = async (newPage = 1) => {
+  const runSearch = async (newPage = 1, sortByOverride) => {
+    const sortBy = sortByOverride !== undefined ? sortByOverride : searchSortBy;
     setLoading(true);
     setHasSearched(true);
     setUnauthorized(false);
@@ -91,7 +98,8 @@ export default function App() {
         selectedCfrList,
         newPage,
         yearFrom,
-        yearTo
+        yearTo,
+        sortBy
       );
 
       setResults(data.results);
@@ -125,74 +133,40 @@ export default function App() {
 
   return (
     <Routes>
+      <Route path="/" element={<Home />} />
+      <Route path="/privacy" element={<PrivacyPolicy />} />
+
       <Route path="/login" element={<Login />} />
+      <Route path="/admin" element={<Admin />} />
+      <Route path="/admin/*" element={<Admin />} />
       <Route
         path="/collections"
         element={
           user === null && !authLoading ? (
             <Navigate to="/login" replace />
           ) : (
-            <div className="page">
-              <header className="topbar">
-                <div className="brand">Mirrulations</div>
-                {user ? (
-                  <div className="auth-section">
-                    <span className="auth-name">{user.name}</span>
-                    <Link
-                      to={onCollectionsPage ? "/" : "/collections"}
-                      className="btn btn-primary collections-nav-btn"
-                    >
-                      <BooksIcon size={24} weight="duotone" />
-                      {onCollectionsPage ? "Back to Search" : "My Collections"}
-                    </Link>
-                    <a href="/logout" className="btn btn-primary">
-                      Log Out
-                    </a>
-                  </div>
-                ) : (
-                  <a href="/login" className="btn btn-primary">
-                    Log In
-                  </a>
-                )}
-              </header>
+            <div className="page page--with-site-nav">
+              <SiteNavbar theme="light" layout="app" onCheckDownloads={() => setOpenDownloadStatus(true)} />
               <div className="layout layout-single">
                 <main className="main">
                   <Collections />
                 </main>
               </div>
+              {openDownloadStatus && (
+              <DownloadStatusModal onClose={() => setOpenDownloadStatus(null)} />
+              )}
             </div>
           )
         }
       />
       <Route
-        path="/"
+        path="/explorer"
         element={
           user === null && !authLoading ? (
             <Navigate to="/login" replace />
           ) : (
-            <div className="page">
-              <header className="topbar">
-                <div className="brand">Mirrulations</div>
-                {user ? (
-                  <div className="auth-section">
-                    <span className="auth-name">{user.name}</span>
-                    <Link
-                      to={onCollectionsPage ? "/" : "/collections"}
-                      className="btn btn-primary collections-nav-btn"
-                    >
-                      <BooksIcon size={24} weight="duotone" />
-                      {onCollectionsPage ? "Back to Search" : "My Collections"}
-                    </Link>
-                    <a href="/logout" className="btn btn-primary">
-                      Log Out
-                    </a>
-                  </div>
-                ) : (
-                  <a href="/login" className="btn btn-primary">
-                    Log In
-                  </a>
-                )}
-              </header>
+            <div className="page page--with-site-nav">
+              <SiteNavbar theme="light" layout="app" showCollectionsLink onCheckDownloads={() => setOpenDownloadStatus(true)}/>
               <div className="layout">
                 <AdvancedSidebar
                   advOpen={advOpen}
@@ -233,6 +207,28 @@ export default function App() {
                       runSearch(1);
                     }}
                   />
+                  <div className="search-sort-row">
+                    <label htmlFor="search-sort-by" className="search-sort-label">
+                      Sort by
+                    </label>
+                    <select
+                      id="search-sort-by"
+                      className="search-sort-select"
+                      value={searchSortBy}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setSearchSortBy(v);
+                        if (hasSearched) {
+                          runSearch(1, v);
+                        }
+                      }}
+                    >
+                      <option value="">Relevance (default)</option>
+                      <option value="document_count">Total documents in docket</option>
+                      <option value="comment_count">Total comments in docket</option>
+                      <option value="modify_date">Last modified date</option>
+                    </select>
+                  </div>
                   <ResultsPanel
                     advancedPayload={advancedPayload}
                     results={results}
@@ -262,7 +258,11 @@ export default function App() {
                   </div>
                 </main>
               </div>
+              {openDownloadStatus && (
+              <DownloadStatusModal onClose={() => setOpenDownloadStatus(null)} />
+              )}
             </div>
+            
           )
         }
       />

@@ -1,9 +1,24 @@
 #!/bin/bash
 # Create an empty Postgres database with schema only (no sample data).
-# Usage: [DB_NAME=mirrulations] ./db/create_empty_db.sh
+# Usage: [DB_NAME=mirrulations] ./db/create_empty_db.sh [-f|--force]
 # For testing: DB_NAME=mirrulations_test ./db/create_empty_db.sh
+# Options:
+#   -f, --force    Overwrite database without prompting
 
 set -e
+
+FORCE=false
+for arg in "$@"; do
+    case "$arg" in
+        -f|--force)
+            FORCE=true
+            ;;
+        *)
+            echo "Unknown option: $arg"
+            exit 1
+            ;;
+    esac
+done
 
 DB_NAME="${DB_NAME:-mirrulations}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -24,10 +39,10 @@ if ! pg_isready -q 2>/dev/null; then
     exit 1
 fi
 
-# Check if database already exists → prompt before overwrite (unless OVERWRITE_YES=1)
+# Check if database already exists → prompt before overwrite (unless -f/--force flag)
 if psql postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$DB_NAME'" 2>/dev/null | grep -q 1; then
     echo "Warning: Database '$DB_NAME' already exists."
-    if [ "$OVERWRITE_YES" != "1" ]; then
+    if [ "$FORCE" != "true" ]; then
         read -p "Overwrite it? (y/n): " confirm
         if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
             echo "Aborted. Database was not modified."
@@ -48,12 +63,13 @@ echo "Creating database..."
 createdb "$DB_NAME"
 
 echo "Loading schema..."
-psql -d "$DB_NAME" -f "$SCHEMA_FILE"
+psql -q -d "$DB_NAME" -f "$SCHEMA_FILE"
 
 # Verify: expect all 9 tables from schema-postgres.sql
-TABLES=$(psql -d "$DB_NAME" -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name IN ('dockets','documentswithfrdoc','comments','links','cfrparts','federal_register_documents','users','collections','collection_dockets');")
-if [ "$TABLES" != "9" ]; then
-    echo "Error: Expected 9 tables; found $TABLES."
+TABLES=$(psql -d "$DB_NAME" -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name IN ('dockets','documents','comments','links','cfrparts','federal_register_documents','users','collections','collection_dockets','admins','authorized_users');")
+echo "Created $TABLES tables."
+if [ "$TABLES" != "11" ]; then
+    echo "Error: Expected 11 tables; found $TABLES."
     exit 1
 fi
 

@@ -1,29 +1,50 @@
 import React from "react";
 import { motion } from "framer-motion";
+import SiteNavbar from "../components/SiteNavbar";
 import "../styles/Login.css";
 
 const Login = () => {
+
+  const unauthorized = new URLSearchParams(window.location.search).get("error") === "unauthorized";
+
   const handleGoogleLogin = () => {
-    window.location.href = "/login";
+    const confirmed = window.confirm(
+      "This application is in testing beta. Only authorized users can access it. Continue?"
+    );
+    if (confirmed) {
+    window.location.href = "/auth/login"; 
+  }
   };
 
   return (
-    <div className="login-wrapper">
+    <div className="login-page-wrap">
+      <SiteNavbar theme="light" />
+      <div className="login-wrapper">
       <motion.div
         className="login-box"
         initial={{ opacity: 0, y: -70 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 2.4, ease: "easeInOut" }}
       >
-        <h2>Welcome to Mirrulations Search! Please Login with your Google Account.</h2>
+        <h2>
+          Welcome to Mirrulations Explorer. Sign in with your Google account to
+          continue.
+        </h2>
+
+        {unauthorized && (
+          <p style={{ color: "#f87171", fontSize: "0.9rem", marginBottom: "1rem" }}>
+            Your account is not authorized to access this site.
+          </p>
+        )}
 
         <motion.button
+          type="button"
           className="google-btn"
           onClick={handleGoogleLogin}
           whileHover={{ scale: 1.05 }}
           whileTap={{ scale: 0.97 }}
         >
-          Login
+          Sign in with Google
 
           <span className="google-icon">
             <svg viewBox="0 0 48 48">
@@ -41,6 +62,7 @@ const Login = () => {
           </span>
         </motion.button>
       </motion.div>
+      </div>
     </div>
   );
 };

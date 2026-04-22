@@ -1,9 +1,16 @@
-export async function searchDockets(query, docket_type = '', agency = [], cfr_part = [], page = 1, yearFrom = '', yearTo = '') {
+/** Backend GET /search/?sort_by= — relevance when omitted; else document_count | comment_count | modify_date */
+const SORT_BY_VALUES = new Set(['document_count', 'comment_count', 'modify_date'])
+
+export async function searchDockets(query, docket_type = '', agency = [], cfr_part = [], page = 1, yearFrom = '', yearTo = '', sortBy = '') {
 
 	// URLSearchParams make valid params that allow for spaces, special chars, etc
 	const params = new URLSearchParams()
 	params.append("str", query)
 	params.append("page", page)
+	const key = (sortBy || '').trim()
+	if (key && SORT_BY_VALUES.has(key)) {
+		params.append("sort_by", key)
+	}
 
 	const normalizeDate = (val, isEnd = false) => {
 		if (/^\d{4}$/.test((val || '').trim())) {

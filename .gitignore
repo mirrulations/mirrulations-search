@@ -8,9 +8,16 @@ __pycache__
 # Keep the dockets directory present in the repo, but ignore any downloaded contents.
 dockets/*
 !dockets/.gitkeep
+db/dockets/*
+!db/dockets/.gitkeep
 frontend/dist/
 frontend/node_modules/
 gunicorn.pid
+downloads/
+gunicorn-access.log
+gunicorn-error.log
+worker.log
+worker.pid
 
 # npm / Node
 node_modules/
@@ -30,4 +37,3 @@ static/index-*.js
 static/index-*.css
 static/assets/index-*.js
 static/assets/index-*.css
-

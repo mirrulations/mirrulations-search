@@ -61,51 +61,100 @@ def _docket_dir_with_derived_json_and_plain_txt(tmpdir: str) -> Path:
     return root
 
 
+def _docket_dir_with_document_content_htm(
+    tmpdir: str, docket_id: str, filename: str, html: str
+) -> None:
+    """Lay out ``raw-data/documents`` with one content HTM as if fetch succeeded."""
+    docs = Path(tmpdir) / docket_id / "raw-data" / "documents"
+    docs.mkdir(parents=True)
+    (docs / filename).write_text(html, encoding="utf-8")
+
+
+def _fake_fetch_docket_ready(tmpdir: str, mock_popen, mock_which) -> Path:
+    """Configure fetch mocks, create minimal docket tree, run ``fetch_docket``."""
+    mock_which.return_value = "/usr/local/bin/mirrulations-fetch"
+    mock_proc = MagicMock()
+    mock_proc.poll.side_effect = [None, 0]
+    mock_proc.returncode = 0
+    mock_popen.return_value.__enter__.return_value = mock_proc
+    did = "FAA-2025-0618"
+    _docket_dir_with_document_content_htm(
+        tmpdir,
+        did,
+        f"{did}-0001_content.htm",
+        "<html><body>Airworthiness</body></html>",
+    )
+    return fetch_docket(did, tmpdir)
+
+
 class TestFetchDocket:
     """Test docket file fetching functionality."""
 
-    @patch('ingest.subprocess.run')
-    def test_fetch_docket_success(self, mock_run):
+    @patch("ingest.subprocess.Popen")
+    @patch("ingest.shutil.which")
+    def test_fetch_docket_success(self, mock_which, mock_popen):
         """Successfully fetch docket using mirrulations-fetch."""
-        mock_run.return_value = MagicMock(returncode=0)
+        mock_which.return_value = "/usr/local/bin/mirrulations-fetch"
+        mock_proc = MagicMock()
+        mock_proc.poll.side_effect = [None, 0]
+        mock_proc.returncode = 0
+        mock_popen.return_value.__enter__.return_value = mock_proc
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Create the expected docket directory
             docket_dir = Path(tmpdir) / "FAA-2025-0618"
             docket_dir.mkdir()
 
             result = fetch_docket("FAA-2025-0618", tmpdir)
 
-            # Verify subprocess was called correctly
-            mock_run.assert_called_once()
-            args = mock_run.call_args
-            assert "mirrulations-fetch" in args[0][0]
-            assert "FAA-2025-0618" in args[0][0]
+            mock_which.assert_called_once_with("mirrulations-fetch")
             assert result == docket_dir
+            assert result.name == "FAA-2025-0618"
+            mock_popen.assert_called_once()
+            call_args = mock_popen.call_args
+            assert call_args[0][0] == ["/usr/local/bin/mirrulations-fetch", "FAA-2025-0618"]
 
-    @patch('ingest.subprocess.run')
-    def test_fetch_docket_not_found(self, mock_run):
+    @patch("ingest.subprocess.Popen")
+    @patch("ingest.shutil.which")
+    def test_fetch_docket_not_found(self, mock_which, mock_popen):
         """Handle missing docket directory after fetch."""
-        mock_run.return_value = MagicMock(returncode=0)
+        mock_which.return_value = "/usr/local/bin/mirrulations-fetch"
+        mock_proc = MagicMock()
+        mock_proc.poll.return_value = 0
+        mock_proc.returncode = 0
+        mock_popen.return_value.__enter__.return_value = mock_proc
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Don't create the directory - simulate fetch failure
             with pytest.raises(SystemExit):
                 fetch_docket("MISSING-2025-0001", tmpdir)
 
-    @patch('ingest.subprocess.run')
-    def test_fetch_docket_subprocess_error(self, mock_run):
-        """Handle subprocess errors during fetch."""
-        mock_run.side_effect = FileNotFoundError("mirrulations-fetch not found")
+    @patch("ingest.subprocess.Popen")
+    @patch("ingest.shutil.which")
+    def test_fetch_docket_subprocess_error(self, mock_which, mock_popen):
+        """Handle Popen failing to start the fetch executable."""
+        mock_which.return_value = "/usr/local/bin/mirrulations-fetch"
+        mock_popen.side_effect = FileNotFoundError("mirrulations-fetch not found")
 
         with tempfile.TemporaryDirectory() as tmpdir:
             with pytest.raises(SystemExit):
                 fetch_docket("FAA-2025-0618", tmpdir)
 
-    @patch('ingest.subprocess.run')
-    def test_fetch_docket_calculates_correct_path(self, mock_run):
+    @patch("ingest.shutil.which")
+    def test_fetch_docket_command_not_on_path(self, mock_which):
+        """Exit when mirrulations-fetch is not on PATH."""
+        mock_which.return_value = None
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with pytest.raises(SystemExit):
+                fetch_docket("FAA-2025-0618", tmpdir)
+
+    @patch("ingest.subprocess.Popen")
+    @patch("ingest.shutil.which")
+    def test_fetch_docket_calculates_correct_path(self, mock_which, mock_popen):
         """Verify fetch_docket returns correct path."""
-        mock_run.return_value = MagicMock(returncode=0)
+        mock_which.return_value = "/usr/local/bin/mirrulations-fetch"
+        mock_proc = MagicMock()
+        mock_proc.poll.return_value = 0
+        mock_proc.returncode = 0
+        mock_popen.return_value.__enter__.return_value = mock_proc
 
         with tempfile.TemporaryDirectory() as tmpdir:
             docket_dir = Path(tmpdir) / "CMS-2025-0240"
@@ -115,6 +164,24 @@ class TestFetchDocket:
 
             assert result.name == "CMS-2025-0240"
             assert result.parent == Path(tmpdir)
+
+    @patch("ingest.subprocess.Popen")
+    @patch("ingest.shutil.which")
+    def test_fetch_docket_non_zero_return_code(self, mock_which, mock_popen):
+        """Handle non-zero return code from subprocess."""
+        mock_which.return_value = "/usr/local/bin/mirrulations-fetch"
+        mock_proc = MagicMock()
+        mock_proc.poll.side_effect = [None, 1]  # Returns 1 (error code)
+        mock_proc.returncode = 1
+        mock_proc.communicate.return_value = ("", "Fetch error")
+        mock_popen.return_value.__enter__.return_value = mock_proc
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            docket_dir = Path(tmpdir) / "FAA-2025-0618"
+            docket_dir.mkdir()
+
+            with pytest.raises(SystemExit):
+                fetch_docket("FAA-2025-0618", tmpdir)
 
 
 class TestIngestOpenSearch:
@@ -140,7 +207,7 @@ class TestIngestOpenSearch:
             mock_client.index.assert_called_once()
             call_kwargs = mock_client.index.call_args[1]
 
-            assert call_kwargs["index"] == "documents"
+            assert call_kwargs["index"] == "documents_text"
             assert call_kwargs["id"] == "FAA-2025-0618-0001_content.htm"
             assert call_kwargs["body"]["docketId"] == "FAA-2025-0618"
             assert call_kwargs["body"]["documentId"] == "FAA-2025-0618-0001_content.htm"
@@ -249,6 +316,76 @@ class TestIngestOpenSearch:
             assert kw["body"]["docketId"] == "FAA-2025-0618"
             assert kw["body"]["commentText"] == "Hello world"
 
+    def test_ingest_comment_progress_bar_disabled_for_small_count(self):
+        """Verify progress bar disabled when processing few comments."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            docket_dir = Path(tmpdir) / "SMALL-2025-0001"
+            cdir = docket_dir / "raw-data" / "comments"
+            cdir.mkdir(parents=True)
+            # Create only 3 comment files
+            for i in range(3):
+                (cdir / f"comment{i}.json").write_text(
+                    json.dumps({
+                        "data": {
+                            "id": f"SMALL-2025-0001-000{i}",
+                            "attributes": {
+                                "comment": f"Comment {i}",
+                                "docketId": "SMALL-2025-0001",
+                                "agencyId": "TEST",
+                                "documentType": "Public Submission",
+                                "postedDate": "2025-01-01T00:00:00Z",
+                            },
+                            "links": {
+                                "self": (
+                                    f"https://api.regulations.gov/v4/comments/"
+                                    f"SMALL-2025-0001-000{i}"
+                                ),
+                            },
+                        }
+                    }),
+                    encoding="utf-8",
+                )
+            mock_client = MagicMock()
+            mock_client.indices.exists.return_value = True
+            n = ingest_comment_json_to_opensearch(docket_dir, mock_client)
+            assert n == 3
+            assert mock_client.index.call_count == 3
+
+    def test_ingest_comment_progress_bar_enabled_for_large_count(self):
+        """Verify progress bar enabled when processing many comments."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            docket_dir = Path(tmpdir) / "LARGE-2025-0001"
+            cdir = docket_dir / "raw-data" / "comments"
+            cdir.mkdir(parents=True)
+            # Create 100 comment files (many comments)
+            for i in range(100):
+                (cdir / f"comment{i}.json").write_text(
+                    json.dumps({
+                        "data": {
+                            "id": f"LARGE-2025-0001-{i:05d}",
+                            "attributes": {
+                                "comment": f"Comment {i}",
+                                "docketId": "LARGE-2025-0001",
+                                "agencyId": "TEST",
+                                "documentType": "Public Submission",
+                                "postedDate": "2025-01-01T00:00:00Z",
+                            },
+                            "links": {
+                                "self": (
+                                    f"https://api.regulations.gov/v4/comments/"
+                                    f"LARGE-2025-0001-{i:05d}"
+                                ),
+                            },
+                        }
+                    }),
+                    encoding="utf-8",
+                )
+            mock_client = MagicMock()
+            mock_client.indices.exists.return_value = True
+            n = ingest_comment_json_to_opensearch(docket_dir, mock_client)
+            assert n == 100
+            assert mock_client.index.call_count == 100
+
 
 class TestFileDiscovery:
     """Test HTM file discovery and reading functionality."""
@@ -343,32 +480,38 @@ class TestFileDiscovery:
 class TestIntegration:
     """Integration tests for full ingest workflow."""
 
-    @patch('ingest.subprocess.run')
-    def test_full_workflow_fetch_then_ingest(self, mock_run):
+    @patch("ingest.subprocess.Popen")
+    @patch("ingest.shutil.which")
+    def test_full_workflow_fetch_then_ingest(self, mock_which, mock_popen):
         """Test complete workflow: fetch docket, then ingest HTM files."""
-        mock_run.return_value = MagicMock(returncode=0)
-
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Setup: Create docket structure as if fetch succeeded
-            docket_dir = Path(tmpdir) / "FAA-2025-0618"
-            docs_dir = docket_dir / "raw-data" / "documents"
-            docs_dir.mkdir(parents=True)
-
-            # Create HTM file to be ingested
-            htm_file = docs_dir / "FAA-2025-0618-0001_content.htm"
-            htm_file.write_text("<html><body>Airworthiness</body></html>")
-
-            # Step 1: Fetch the docket
-            fetched_path = fetch_docket("FAA-2025-0618", tmpdir)
+            fetched_path = _fake_fetch_docket_ready(tmpdir, mock_popen, mock_which)
             assert fetched_path.exists()
 
-            # Step 2: Ingest HTM files to OpenSearch
             mock_client = MagicMock()
             ingest_htm_files(fetched_path, mock_client)
-
-            # Verify ingestion occurred
             assert mock_client.index.called
             assert mock_client.index.call_count == 1
+
+    @patch("ingest.subprocess.Popen")
+    @patch("ingest.shutil.which")
+    def test_full_workflow_fetch_verbose_logging(self, mock_which, mock_popen):
+        """Test fetch_docket with spinner animation (verbose output simulation)."""
+        mock_which.return_value = "/usr/local/bin/mirrulations-fetch"
+        mock_proc = MagicMock()
+        # Simulate spinner updates by making poll() return None multiple times
+        mock_proc.poll.side_effect = [None, None, None, 0]
+        mock_proc.returncode = 0
+        mock_popen.return_value.__enter__.return_value = mock_proc
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            docket_dir = Path(tmpdir) / "FAA-2025-0618"
+            docket_dir.mkdir()
+
+            # Fetch should work even with spinner animation
+            result = fetch_docket("FAA-2025-0618", tmpdir)
+            assert result.exists()
+            assert result == docket_dir
 
     def test_docket_id_extraction_from_path(self):
         """Verify docket ID extraction from directory path."""
@@ -476,6 +619,72 @@ class TestExtractedTxtLayout:
             rows = read_derived_extracted_text(root)
             assert len(rows) == 2
 
+    def test_read_derived_progress_bar_disabled_for_small_json(self):
+        """Verify progress bar disabled for <50 JSON files."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "SMALL-2025-0001"
+            ext = root / "derived-data" / "mirrulations" / "extracted_txt"
+            ext.mkdir(parents=True)
+            # Create only 10 JSON files (below 50 threshold)
+            for i in range(10):
+                (ext / f"doc{i}.json").write_text(
+                    json.dumps({
+                        "docketId": "SMALL-2025-0001",
+                        "commentId": f"c{i}",
+                        "extractedText": f"text{i}",
+                    }),
+                    encoding="utf-8",
+                )
+            rows = read_derived_extracted_text(root)
+            assert len(rows) == 10
+
+    def test_read_derived_progress_bar_enabled_for_large_json(self):
+        """Verify progress bar enabled for >=50 JSON files."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "LARGE-2025-0001"
+            ext = root / "derived-data" / "mirrulations" / "extracted_txt"
+            ext.mkdir(parents=True)
+            # Create 60 JSON files (above 50 threshold)
+            for i in range(60):
+                (ext / f"doc{i}.json").write_text(
+                    json.dumps({
+                        "docketId": "LARGE-2025-0001",
+                        "commentId": f"c{i}",
+                        "extractedText": f"text{i}",
+                    }),
+                    encoding="utf-8",
+                )
+            rows = read_derived_extracted_text(root)
+            assert len(rows) == 60
+
+    def test_read_derived_plain_text_progress_bar_disabled_for_small(self):
+        """Verify progress bar disabled for <50 plain text files."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "SMALL-2025-0001"
+            ext = root / "derived-data" / "mirrulations" / "extracted_txt"
+            pypdf = ext / "comments_extracted_text" / "pypdf"
+            pypdf.mkdir(parents=True)
+            # Create only 10 plain text files
+            for i in range(10):
+                plain = f"comment_{i}_attachment_1_extracted.txt"
+                (pypdf / plain).write_text(f"text content {i}", encoding="utf-8")
+            rows = read_derived_extracted_text(root)
+            assert len(rows) == 10
+
+    def test_read_derived_plain_text_progress_bar_enabled_for_large(self):
+        """Verify progress bar enabled for >=50 plain text files."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "LARGE-2025-0001"
+            ext = root / "derived-data" / "mirrulations" / "extracted_txt"
+            pypdf = ext / "comments_extracted_text" / "pypdf"
+            pypdf.mkdir(parents=True)
+            # Create 60 plain text files
+            for i in range(60):
+                plain = f"comment_{i}_attachment_1_extracted.txt"
+                (pypdf / plain).write_text(f"text content {i}", encoding="utf-8")
+            rows = read_derived_extracted_text(root)
+            assert len(rows) == 60
+
 
 class TestFederalRegisterFrDocNums:
     """``extract_frdocnums_*`` / ``collect_frdocnums_from_docket`` (ingest.py)."""
@@ -515,6 +724,40 @@ class TestFederalRegisterFrDocNums:
                 encoding="utf-8",
             )
             assert collect_frdocnums_from_docket(docket_dir) == {"FR-1"}
+
+    def test_collect_frdocnums_progress_bar_disabled_for_small_datasets(self):
+        """Verify progress bars are disabled for small datasets (<20 docs)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            docket_dir = Path(tmpdir) / "SMALL-2025-0001"
+            docs = docket_dir / "raw-data" / "documents"
+            docs.mkdir(parents=True)
+            # Create only 5 documents (below the 20 threshold)
+            for i in range(5):
+                (docs / f"doc{i}.json").write_text(
+                    json.dumps(
+                        {"data": {"attributes": {"frDocNum": f"FR-{i}"}}}
+                    ),
+                    encoding="utf-8",
+                )
+            result = collect_frdocnums_from_docket(docket_dir)
+            assert len(result) == 5
+
+    def test_collect_frdocnums_progress_bar_enabled_for_large_datasets(self):
+        """Verify progress bars are enabled for large datasets (>=20 docs)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            docket_dir = Path(tmpdir) / "LARGE-2025-0001"
+            docs = docket_dir / "raw-data" / "documents"
+            docs.mkdir(parents=True)
+            # Create 25 documents (above the 20 threshold)
+            for i in range(25):
+                (docs / f"doc{i}.json").write_text(
+                    json.dumps(
+                        {"data": {"attributes": {"frDocNum": f"FR-{i}"}}}
+                    ),
+                    encoding="utf-8",
+                )
+            result = collect_frdocnums_from_docket(docket_dir)
+            assert len(result) == 25
 
 
 class TestIngestExtractedTextOpenSearch:

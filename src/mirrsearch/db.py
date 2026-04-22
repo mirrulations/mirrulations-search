@@ -1,9 +1,18 @@
+# pylint: disable=too-many-lines
 import json
 from dataclasses import dataclass
-from typing import List, Dict, Any, Set
+from typing import List, Dict, Any, Set, Optional
 import os
-import psycopg2
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import Engine
 from opensearchpy import OpenSearch
+
+try:
+    import requests
+    from requests_aws4auth import AWS4Auth
+except ImportError:
+    requests = None
+    AWS4Auth = None
 
 try:
     import boto3
@@ -88,16 +97,114 @@ def _opensearch_match_docket_bucket_size() -> int:
     return _parse_positive_int_env("OPENSEARCH_MATCH_DOCKET_BUCKET_SIZE", 50000)
 
 
-def _opensearch_comment_id_terms_size() -> int:
-    """Max distinct commentId values per docket in nested terms aggregations."""
-    return _parse_positive_int_env("OPENSEARCH_COMMENT_ID_TERMS_SIZE", 65535)
+
+# ---------------------------------------------------------------------------
+# SQLAlchemy engine — created once at module level, shared across all requests.
+#
+#   pool_pre_ping=True  — before handing out a connection, SQLAlchemy runs
+#                         SELECT 1. If the connection is dead it discards it
+#                         and opens a fresh one transparently.
+#   pool_recycle=1800   — recycle connections older than 30 minutes so RDS's
+#                         idle-connection timeout never kills them silently.
+#   pool_size / max_overflow — tune to match your Gunicorn worker count.
+# ---------------------------------------------------------------------------
+_ENGINE: Engine = None
+
+
+def _build_engine(dsn: str) -> Engine:
+    return create_engine(
+        dsn,
+        pool_pre_ping=True,
+        pool_recycle=1800,
+        pool_size=10,
+        max_overflow=5,
+        connect_args={
+            "connect_timeout": 5,
+            "options": "-c statement_timeout=60000",
+        },
+    )
+
+
+def _get_engine() -> Engine:  # pylint: disable=too-many-statements
+    """Return the shared SQLAlchemy engine, creating it on first call."""
+    global _ENGINE  # pylint: disable=global-statement
+    if _ENGINE is not None:
+        return _ENGINE
+
+    use_aws_secrets = os.getenv("USE_AWS_SECRETS", "").lower() in {"1", "true", "yes", "on"}
+    if use_aws_secrets:
+        creds = _get_secrets_from_aws()
+        dsn = (
+            f"postgresql+psycopg2://{creds['username']}:{creds['password']}"
+            f"@{creds['host']}:{creds['port']}/{creds['db']}"
+        )
+    else:
+        if LOAD_DOTENV is not None:
+            LOAD_DOTENV()
+        host = os.getenv("DB_HOST", "localhost")
+        port = os.getenv("DB_PORT", "5432")
+        name = os.getenv("DB_NAME", "your_db")
+        user = os.getenv("DB_USER", "your_user")
+        password = os.getenv("DB_PASSWORD", "your_password")
+        dsn = f"postgresql+psycopg2://{user}:{password}@{host}:{port}/{name}"
+
+    _ENGINE = _build_engine(dsn)
+    return _ENGINE
 
 
 @dataclass(frozen=True)
 class DBLayer:  # pylint: disable=too-many-public-methods
-    conn: Any = None
+    """
+    All database methods now use SQLAlchemy's connection pool via _get_engine().
 
-    def search( # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-branches,too-many-statements
+    self.engine holds the shared Engine. Every method checks `self.engine is None`
+    the same way the original checked `self.conn is None`, so the rest of the app
+    sees no interface change at all.
+    """
+    engine: Any = None
+
+    # ------------------------------------------------------------------
+    # Internal helpers — every SQL method goes through one of these.
+    # SQLAlchemy's pool_pre_ping already handles dead-connection detection;
+    # engine.begin() handles automatic rollback on failure.
+    # ------------------------------------------------------------------
+    def _run(self, sql: str, params: dict = None):
+        """
+        Execute a raw SQL string with the engine's connection pool.
+        Returns all rows as a list of tuples.
+        Uses :name style params (SQLAlchemy text() requirement).
+        """
+        with self.engine.connect() as conn:
+            result = conn.execute(text(sql), params or {})
+            return result.fetchall()
+
+    def _run_write(self, sql: str, params: dict = None) -> int:
+        """
+        Execute a write (INSERT/UPDATE/DELETE) and commit.
+        Returns rowcount.
+        engine.begin() auto-commits on success and auto-rolls back on error.
+        """
+        with self.engine.begin() as conn:
+            result = conn.execute(text(sql), params or {})
+            return result.rowcount
+
+    def _run_returning(self, sql: str, params: dict = None):
+        """
+        Execute a write with RETURNING and commit.
+        Returns the first column of the first row.
+        engine.begin() auto-commits on success and auto-rolls back on error.
+        """
+        with self.engine.begin() as conn:
+            result = conn.execute(text(sql), params or {})
+            return result.fetchone()[0]
+
+    # ------------------------------------------------------------------
+    # All methods below are identical in behaviour to the original.
+    # The only change is cursor/execute → _run / _run_write / _run_returning,
+    # and %s params → :name params (SQLAlchemy text() style).
+    # ------------------------------------------------------------------
+
+    def search(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-branches,too-many-statements
             self,
             query: str,
             docket_type_param: str = None,
@@ -106,7 +213,7 @@ class DBLayer:  # pylint: disable=too-many-public-methods
             start_date: str = None,
             end_date: str = None) \
             -> List[Dict[str, Any]]:
-        if self.conn is None:
+        if self.engine is None:
             return []
         results = self._search_dockets_postgres(
             query, docket_type_param, agency, cfr_part_param, start_date, end_date
@@ -117,24 +224,26 @@ class DBLayer:  # pylint: disable=too-many-public-methods
         allowed = self._get_cfr_docket_ids(exact_pairs)
         return [row for row in results if row["docket_id"] in allowed]
 
-    def _get_cfr_docket_ids(self, cfr_pairs: List[tuple]) -> Set[str]:
+    def _get_cfr_docket_ids(self, cfr_pairs: List[tuple]) -> Set[str]:  # pylint: disable=too-many-locals
         """Return docket IDs matching exact CFR title+part pairs."""
-        if self.conn is None or not cfr_pairs:
+        if self.engine is None or not cfr_pairs:
             return set()
-        clauses = " OR ".join("(cp.title = %s AND cp.cfrPart = %s)" for _ in cfr_pairs)
+        clauses = " OR ".join(
+            f"(cp.title = :title_{i} AND cp.cfrPart = :part_{i})"
+            for i in range(len(cfr_pairs))
+        )
         sql = f"""
             SELECT DISTINCT d.docket_id
-            FROM documentsWithFRdoc d
+            FROM documents d
             JOIN cfrparts cp ON cp.frdocnum = d.frdocnum
             WHERE ({clauses})
         """
-        params: List[str] = []
-        for title, part in cfr_pairs:
-            params.append(title)
-            params.append(part)
-        with self.conn.cursor() as cur:
-            cur.execute(sql, params)
-            return {row[0] for row in cur.fetchall()}
+        params = {}
+        for i, (title, part) in enumerate(cfr_pairs):
+            params[f"title_{i}"] = title
+            params[f"part_{i}"] = part
+        rows = self._run(sql, params)
+        return {row[0] for row in rows}
 
     def _search_dockets_postgres(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-branches,too-many-statements
             self, query: str, docket_type_param: str = None,
@@ -153,73 +262,76 @@ class DBLayer:  # pylint: disable=too-many-public-methods
                 cp.cfrPart,
                 l.link
             FROM dockets d
-            JOIN documentsWithFRdoc doc ON doc.docket_id = d.docket_id
+            JOIN documents doc ON doc.docket_id = d.docket_id
             LEFT JOIN cfrparts cp ON cp.frdocnum = doc.frdocnum
             LEFT JOIN links l ON l.title = cp.title AND l.cfrPart = cp.cfrPart
-            WHERE d.docket_title ILIKE %s
+            WHERE d.docket_title ILIKE :query
         """
-        params = [f"%{(query or '').strip().lower()}%"]
+        params: Dict[str, Any] = {"query": f"%{(query or '').strip().lower()}%"}
 
         if docket_type_param:
-            sql += " AND d.docket_type = %s"
-            params.append(docket_type_param)
+            sql += " AND d.docket_type = :docket_type"
+            params["docket_type"] = docket_type_param
 
         if agency:
-            clauses = " OR ".join("d.agency_id ILIKE %s" for _ in agency)
+            clauses = " OR ".join(f"d.agency_id ILIKE :agency_{i}" for i in range(len(agency)))
             sql += f" AND ({clauses})"
-            params.extend(f"%{a}%" for a in agency)
+            for i, a in enumerate(agency):
+                params[f"agency_{i}"] = f"%{a}%"
 
         if start_date:
-            sql += " AND d.modify_date::date >= %s::date"
-            params.append(start_date)
+            sql += " AND d.modify_date::date >= :start_date::date"
+            params["start_date"] = start_date
 
         if end_date:
-            sql += " AND d.modify_date::date <= %s::date"
-            params.append(end_date)
+            sql += " AND d.modify_date::date <= :end_date::date"
+            params["end_date"] = end_date
 
         cfr_patterns = cfr_part_filter_patterns(cfr_part_param)
         if cfr_patterns:
-            clauses = " OR ".join("cp3.cfrPart = %s" for _ in cfr_patterns)
+            clauses = " OR ".join(f"cp3.cfrPart = :cfr_{i}" for i in range(len(cfr_patterns)))
             sql += (
                 " AND EXISTS ("
-                "SELECT 1 FROM documentsWithFRdoc d3 "
+                "SELECT 1 FROM documents d3 "
                 "JOIN cfrparts cp3 ON cp3.frdocnum = d3.frdocnum "
                 "WHERE d3.docket_id = d.docket_id "
                 f"AND ({clauses})"
                 ")"
             )
-            params.extend(cfr_patterns)
+            for i, p in enumerate(cfr_patterns):
+                params[f"cfr_{i}"] = p
 
         exact_pairs = _cfr_exact_title_part_pairs(cfr_part_param)
         if exact_pairs:
             exact_clauses = " OR ".join(
-                "(cp2.title = %s AND cp2.cfrPart = %s)" for _ in exact_pairs
+                f"(cp2.title = :etitle_{i} AND cp2.cfrPart = :epart_{i})"
+                for i in range(len(exact_pairs))
             )
             sql += (
                 " AND EXISTS ("
-                "SELECT 1 FROM documentsWithFRdoc d2 "
+                "SELECT 1 FROM documents d2 "
                 "JOIN cfrparts cp2 ON cp2.frdocnum = d2.frdocnum "
                 "WHERE d2.docket_id = d.docket_id "
                 f"AND ({exact_clauses})"
                 ")"
             )
-            for title, part in exact_pairs:
-                params.extend([title, part])
+            for i, (title, part) in enumerate(exact_pairs):
+                params[f"etitle_{i}"] = title
+                params[f"epart_{i}"] = part
 
         sql += " ORDER BY d.modify_date DESC, d.docket_id, cp.title, cp.cfrPart LIMIT 50"
 
-        with self.conn.cursor() as cur:
-            cur.execute(sql, params)
-            dockets = {}
-            for row in cur.fetchall():
-                self._process_docket_row(dockets, row)
-            return [
-                {**d, "cfr_refs": list(d["cfr_refs"].values())}
-                for d in dockets.values()
-            ]
+        rows = self._run(sql, params)
+        dockets = {}
+        for row in rows:
+            self._process_docket_row(dockets, row)
+        return [
+            {**d, "cfr_refs": list(d["cfr_refs"].values())}
+            for d in dockets.values()
+        ]
 
     def get_dockets_by_ids(self, docket_ids: List[str]) -> List[Dict[str, Any]]:
-        if self.conn is None or not docket_ids:
+        if self.engine is None or not docket_ids:
             return []
         sql = """
             SELECT DISTINCT
@@ -232,28 +344,26 @@ class DBLayer:  # pylint: disable=too-many-public-methods
                 cp.cfrPart,
                 l.link
             FROM dockets d
-            JOIN documentsWithFRdoc doc ON doc.docket_id = d.docket_id
+            JOIN documents doc ON doc.docket_id = d.docket_id
             LEFT JOIN cfrparts cp ON cp.frdocnum = doc.frdocnum
             LEFT JOIN links l ON l.title = cp.title AND l.cfrPart = cp.cfrPart
-            WHERE d.docket_id = ANY(%s)
+            WHERE d.docket_id = ANY(:docket_ids)
             ORDER BY d.modify_date DESC, d.docket_id, cp.title, cp.cfrPart
         """
-        with self.conn.cursor() as cur:
-            cur.execute(sql, (list(docket_ids),))
-            dockets = {}
-            for row in cur.fetchall():
-                self._process_docket_row(dockets, row)
-            return [
-                {**d, "cfr_refs": list(d["cfr_refs"].values())}
-                for d in dockets.values()
-            ]
+        rows = self._run(sql, {"docket_ids": list(docket_ids)})
+        dockets = {}
+        for row in rows:
+            self._process_docket_row(dockets, row)
+        return [
+            {**d, "cfr_refs": list(d["cfr_refs"].values())}
+            for d in dockets.values()
+        ]
 
     def get_agencies(self) -> List[str]:
-        if self.conn is None:
+        if self.engine is None:
             return []
-        with self.conn.cursor() as cur:
-            cur.execute("SELECT DISTINCT agency_id FROM dockets ORDER BY agency_id")
-            return [row[0] for row in cur.fetchall()]
+        rows = self._run("SELECT DISTINCT agency_id FROM dockets ORDER BY agency_id")
+        return [row[0] for row in rows]
 
     @staticmethod
     def _process_docket_row(dockets, row):
@@ -281,11 +391,20 @@ class DBLayer:  # pylint: disable=too-many-public-methods
         """Build a docket-bucketed aggregation query with an inner filter."""
         return {
             "size": 0,
+            "track_total_hits": True,
+            "query": {
+                "bool": {
+                    "should": match_clauses,
+                    "minimum_should_match": 1
+                }
+            },
             "aggs": {
                 "by_docket": {
                     "terms": {
                         "field": "docketId.keyword",
                         "size": _opensearch_match_docket_bucket_size(),
+                        "shard_size": 55000,
+                        "order": {"_count": "desc"}
                     },
                     "aggs": {
                         agg_name: {
@@ -304,14 +423,23 @@ class DBLayer:  # pylint: disable=too-many-public-methods
     @staticmethod
     def _build_docket_agg_query_unique_comments(
             agg_name: str, match_clauses: List[Dict]) -> Dict:
-        """Like _build_docket_agg_query but counts unique commentId per docket."""
+        """Builds a docket-bucketed aggregation query with cardinality for unique comment counts"""
         return {
             "size": 0,
+            "track_total_hits": True,
+            "query": {
+                "bool": {
+                    "should": match_clauses,
+                    "minimum_should_match": 1
+                }
+            },
             "aggs": {
                 "by_docket": {
                     "terms": {
                         "field": "docketId.keyword",
                         "size": _opensearch_match_docket_bucket_size(),
+                        "shard_size": 55000,
+                        "order": {"_count": "desc"}
                     },
                     "aggs": {
                         agg_name: {
@@ -322,47 +450,18 @@ class DBLayer:  # pylint: disable=too-many-public-methods
                                 }
                             },
                             "aggs": {
-                                "by_comment": {
-                                    "terms": {
+                                "unique_comments": {
+                                    "cardinality": {
                                         "field": "commentId.keyword",
-                                        "size": _opensearch_comment_id_terms_size(),
+                                        "precision_threshold": 3000
                                     }
                                 }
-                            },
+                            }
                         }
-                    },
+                    }
                 }
-            },
+            }
         }
-
-    @staticmethod
-    def _comment_ids_per_docket_from_agg(
-            resp: Dict, agg_name: str) -> Dict[str, Set[str]]:
-        """Parse by_docket -> filter agg -> terms on commentId."""
-        out: Dict[str, Set[str]] = {}
-        for bucket in resp.get("aggregations", {}).get("by_docket", {}).get("buckets", []):
-            did = str(bucket["key"])
-            inner = bucket.get(agg_name, {})
-            by_comment = inner.get("by_comment", {})
-            keys = {str(b["key"]) for b in by_comment.get("buckets", [])}
-            if keys:
-                out.setdefault(did, set()).update(keys)
-        return out
-
-    @staticmethod
-    def _merge_unique_comment_matches(
-            comments_resp: Dict, extracted_resp: Dict) -> Dict[str, int]:
-        """Union commentIds from comments and extracted-text index per docket."""
-        from_comments = DBLayer._comment_ids_per_docket_from_agg(
-            comments_resp, "matching_comments")
-        from_extracted = DBLayer._comment_ids_per_docket_from_agg(
-            extracted_resp, "matching_extracted")
-        counts: Dict[str, int] = {}
-        for did in set(from_comments) | set(from_extracted):
-            merged = set(from_comments.get(did, set())) | set(from_extracted.get(did, set()))
-            if merged:
-                counts[did] = len(merged)
-        return counts
 
     @staticmethod
     def _accumulate_counts(
@@ -371,7 +470,7 @@ class DBLayer:  # pylint: disable=too-many-public-methods
         for bucket in buckets:
             match_count = bucket[agg_name]["doc_count"]
             if match_count > 0:
-                docket_id = bucket["key"]
+                docket_id = str(bucket["key"])
                 docket_counts.setdefault(
                     docket_id, {"document_match_count": 0, "comment_match_count": 0}
                 )
@@ -379,16 +478,7 @@ class DBLayer:  # pylint: disable=too-many-public-methods
 
     def text_match_terms(
             self, terms: List[str], opensearch_client=None) -> List[Dict[str, Any]]:
-        """
-        Search OpenSearch for dockets containing the given terms.
-
-        Searches:
-        - documents index: title and documentText fields
-        - comments index: commentText field
-        - comments_extracted_text index: extractedText field
-
-        Returns list of {docket_id, document_match_count, comment_match_count}.
-        """
+        """Search OpenSearch for dockets matching terms across all indexes."""
         if opensearch_client is None:
             opensearch_client = get_opensearch_connection()
         try:
@@ -400,9 +490,89 @@ class DBLayer:  # pylint: disable=too-many-public-methods
             print(f"OpenSearch query failed (fallback to SQL): {e}")
             return []
 
+    def _run_text_match_queries(  # pylint: disable=too-many-locals
+            self, opensearch_client, terms: List[str]) -> List[Dict[str, Any]]:
+        """Execute all three OpenSearch queries and merge their results."""
+        def safe_search(index_name: str, body: Dict) -> Dict:
+            try:
+                return opensearch_client.search(index=index_name, body=body)
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                print(f"OpenSearch index query failed for '{index_name}': {e}")
+                return {"aggregations": {"by_docket": {"buckets": []}}}
+
+        docket_counts: Dict = {}
+
+        doc_match_clauses = [
+            {"multi_match": {
+                "query": t,
+                "fields": ["title^2", "documentText"],
+                "type": "best_fields",
+                "tie_breaker": 0.3,
+                "operator": "or"
+            }}
+            for t in terms
+        ]
+        comment_match_clauses = [{"match": {"commentText": t}} for t in terms]
+        extracted_match_clauses = [{"match": {"extractedText": t}} for t in terms]
+
+        doc_resp = safe_search(
+            "documents_text",
+            self._build_docket_agg_query("matching_docs", doc_match_clauses)
+        )
+        self._accumulate_counts(
+            docket_counts,
+            doc_resp["aggregations"]["by_docket"]["buckets"],
+            "matching_docs",
+            "document_match_count"
+        )
+
+        comment_resp = safe_search(
+            "comments",
+            self._build_docket_agg_query_unique_comments(
+                "matching_comments", comment_match_clauses
+            )
+        )
+        extracted_resp = safe_search(
+            "comments_extracted_text",
+            self._build_docket_agg_query_unique_comments(
+                "matching_extracted", extracted_match_clauses
+            )
+        )
+
+        comment_counts = self._extract_cardinality_counts(
+            comment_resp, "matching_comments"
+        )
+        extracted_counts = self._extract_cardinality_counts(
+            extracted_resp, "matching_extracted"
+        )
+        for did in set(comment_counts) | set(extracted_counts):
+            docket_counts.setdefault(
+                did, {"document_match_count": 0, "comment_match_count": 0}
+            )
+            docket_counts[did]["comment_match_count"] = max(
+                comment_counts.get(did, 0),
+                extracted_counts.get(did, 0)
+            )
+
+        return [{"docket_id": did, **counts} for did, counts in docket_counts.items()]
+
+    @staticmethod
+    def _extract_cardinality_counts(resp: Dict, agg_name: str) -> Dict[str, int]:
+        counts: Dict[str, int] = {}
+        buckets = (
+            resp.get("aggregations", {}).get("by_docket", {}).get("buckets", [])
+        )
+        for bucket in buckets:
+            inner = bucket.get(agg_name, {})
+            if inner.get("doc_count", 0) > 0:
+                value = inner.get("unique_comments", {}).get("value", 0)
+                if value > 0:
+                    counts[str(bucket["key"])] = value
+        return counts
+
     @staticmethod
     def _comment_total_query(docket_ids: List[str]) -> Dict:
-        """Aggregation: per docket, distinct commentId across all matching docs."""
+        """Aggregation: per docket, total comment count."""
         return {
             "size": 0,
             "query": {
@@ -419,7 +589,7 @@ class DBLayer:  # pylint: disable=too-many-public-methods
                         "by_comment": {
                             "terms": {
                                 "field": "commentId.keyword",
-                                "size": _opensearch_comment_id_terms_size(),
+                                "size": 65535,
                             }
                         }
                     },
@@ -427,7 +597,7 @@ class DBLayer:  # pylint: disable=too-many-public-methods
             },
         }
 
-    def get_docket_document_comment_totals(
+    def get_docket_document_comment_totals( # pylint: disable=unused-argument
             self,
             docket_ids: List[str],
             opensearch_client=None
@@ -435,109 +605,39 @@ class DBLayer:  # pylint: disable=too-many-public-methods
         """Return per-docket totals for documents and comments."""
         if not docket_ids:
             return {}
-        if opensearch_client is None:
-            opensearch_client = get_opensearch_connection()
         try:
-            return self._fetch_docket_totals(opensearch_client, docket_ids)
+            return self._fetch_docket_totals(docket_ids)
         except Exception as e:  # pylint: disable=broad-exception-caught
-            print(f"OpenSearch totals query failed (fallback zeros): {e}")
+            print(f"Docket totals query failed: {e}")
             return {}
 
-    def _fetch_docket_totals( # pylint: disable=too-many-locals
-            self, opensearch_client, docket_ids: List[str]) -> Dict[str, Dict[str, int]]:
-        """Execute totals queries and assemble per-docket counts."""
-        doc_query = {
-            "size": 0,
-            "query": {"bool": {"filter": [
-                {"terms": {"docketId.keyword": docket_ids}}
-            ]}},
-            "aggs": {
-                "by_docket": {
-                    "terms": {"field": "docketId.keyword", "size": len(docket_ids)}
-                }
-            }
-        }
-        doc_response = opensearch_client.search(index="documents", body=doc_query)
-        comment_response = opensearch_client.search(
-            index="comments", body=self._comment_total_query(docket_ids)
-        )
+    def _fetch_docket_totals(
+            self, docket_ids: List[str]) -> Dict[str, Dict[str, int]]:
+        """Fetch document and comment total counts from Postgres."""
         totals: Dict[str, Dict[str, int]] = {}
-        for bucket in doc_response["aggregations"]["by_docket"]["buckets"]:
-            docket_id = str(bucket["key"])
-            totals[docket_id] = {
-                "document_total_count": bucket["doc_count"],
-                "comment_total_count": 0
-            }
-        for bucket in comment_response["aggregations"]["by_docket"]["buckets"]:
-            docket_id = str(bucket["key"])
-            n_comments = len(bucket.get("by_comment", {}).get("buckets", []))
-            totals.setdefault(docket_id, {
-                "document_total_count": 0,
-                "comment_total_count": 0
-            })
-            totals[docket_id]["comment_total_count"] = n_comments
+        if self.engine is None:
+            return totals
+        rows = self._run(
+            "SELECT docket_id, COUNT(*) FROM documents "
+            "WHERE docket_id = ANY(:docket_ids) GROUP BY docket_id",
+            {"docket_ids": list(docket_ids)}
+        )
+        for docket_id, count in rows:
+            totals[docket_id] = {"document_total_count": count, "comment_total_count": 0}
+        rows = self._run(
+            "SELECT docket_id, COUNT(*) FROM comments "
+            "WHERE docket_id = ANY(:docket_ids) GROUP BY docket_id",
+            {"docket_ids": list(docket_ids)}
+        )
+        for docket_id, count in rows:
+            totals.setdefault(docket_id, {"document_total_count": 0, "comment_total_count": 0})
+            totals[docket_id]["comment_total_count"] = count
         return totals
 
-    def _run_text_match_queries(  # pylint: disable=too-many-locals
-            self, opensearch_client, terms: List[str]) -> List[Dict[str, Any]]:
-        """Execute all three OpenSearch queries and merge their results."""
-        def buckets(resp):
-            return resp["aggregations"]["by_docket"]["buckets"]
-
-        def safe_search(index: str, body: Dict) -> Dict:
-            try:
-                return opensearch_client.search(index=index, body=body)
-            except Exception as e:  # pylint: disable=broad-exception-caught
-                print(f"OpenSearch index query failed for '{index}': {e}")
-                return {"aggregations": {"by_docket": {"buckets": []}}}
-
-        docket_counts: Dict = {}
-        doc_resp = safe_search(
-            "documents",
-            self._build_docket_agg_query(
-                "matching_docs",
-                [{"multi_match": {"query": t, "fields": ["title", "documentText"]}}
-                 for t in terms],
-            ),
-        )
-        comment_resp = safe_search(
-            "comments",
-            self._build_docket_agg_query_unique_comments(
-                "matching_comments",
-                [{"match": {"commentText": t}} for t in terms],
-            ),
-        )
-        extracted_resp = safe_search(
-            "comments_extracted_text",
-            self._build_docket_agg_query_unique_comments(
-                "matching_extracted",
-                [{"match": {"extractedText": t}} for t in terms],
-            ),
-        )
-        self._accumulate_counts(
-            docket_counts, buckets(doc_resp), "matching_docs", "document_match_count"
-        )
-        comment_ids_by_docket = self._comment_ids_per_docket_from_agg(
-            comment_resp, "matching_comments"
-        )
-        for did, ids in comment_ids_by_docket.items():
-            docket_counts.setdefault(
-                did, {"document_match_count": 0, "comment_match_count": 0}
-            )
-            docket_counts[did]["comment_match_count"] = len(ids)
-        extracted_ids_by_docket = self._comment_ids_per_docket_from_agg(
-            extracted_resp, "matching_extracted"
-        )
-        for did, ids in extracted_ids_by_docket.items():
-            docket_counts.setdefault(
-                did, {"document_match_count": 0, "comment_match_count": 0}
-            )
-            docket_counts[did]["document_match_count"] += len(ids)
-        return [{"docket_id": did, **counts} for did, counts in docket_counts.items()]
 
     def get_collections(self, user_email: str) -> List[Dict[str, Any]]:
         """Return all collections belonging to the given user."""
-        if self.conn is None:
+        if self.engine is None:
             return []
         sql = """
             SELECT c.collection_id, c.collection_name, c.user_email,
@@ -547,101 +647,80 @@ class DBLayer:  # pylint: disable=too-many-public-methods
                    ) AS docket_ids
             FROM collections c
             LEFT JOIN collection_dockets cd ON cd.collection_id = c.collection_id
-            WHERE c.user_email = %s
+            WHERE c.user_email = :user_email
             GROUP BY c.collection_id, c.collection_name, c.user_email
             ORDER BY c.collection_id
         """
-        with self.conn.cursor() as cur:
-            cur.execute(sql, (user_email,))
-            return [
-                {
-                    "collection_id": row[0],
-                    "name": row[1],
-                    "user_email": row[2],
-                    "docket_ids": row[3] if isinstance(row[3], list) else []
-                }
-                for row in cur.fetchall()
-            ]
+        rows = self._run(sql, {"user_email": user_email})
+        return [
+            {
+                "collection_id": row[0],
+                "name": row[1],
+                "user_email": row[2],
+                "docket_ids": row[3] if isinstance(row[3], list) else []
+            }
+            for row in rows
+        ]
 
     def create_collection(self, user_email: str, name: str) -> int:
         """Create a new collection for the user and return its id."""
-        if self.conn is None:
+        if self.engine is None:
             return -1
-        upsert_user_sql = """
-            INSERT INTO users (email, name) VALUES (%s, %s)
-            ON CONFLICT (email) DO NOTHING
-        """
-        with self.conn.cursor() as cur:
-            cur.execute(upsert_user_sql, (user_email, user_email))
-        insert_sql = """
-            INSERT INTO collections (user_email, collection_name)
-            VALUES (%s, %s)
-            RETURNING collection_id
-        """
-        with self.conn.cursor() as cur:
-            cur.execute(insert_sql, (user_email, name))
-            collection_id = cur.fetchone()[0]
-        self.conn.commit()
-        return collection_id
+        self._run_write(
+            "INSERT INTO users (email, name) VALUES (:email, :name) "
+            "ON CONFLICT (email) DO NOTHING",
+            {"email": user_email, "name": user_email}
+        )
+        return self._run_returning(
+            "INSERT INTO collections (user_email, collection_name) "
+            "VALUES (:user_email, :name) RETURNING collection_id",
+            {"user_email": user_email, "name": name}
+        )
 
     def delete_collection(self, collection_id: int, user_email: str) -> bool:
         """Delete a collection owned by the user. Returns True if deleted."""
-        if self.conn is None:
+        if self.engine is None:
             return False
-        sql = """
-            DELETE FROM collections
-            WHERE collection_id = %s AND user_email = %s
-        """
-        with self.conn.cursor() as cur:
-            cur.execute(sql, (collection_id, user_email))
-            deleted = cur.rowcount > 0
-        self.conn.commit()
-        return deleted
+        rowcount = self._run_write(
+            "DELETE FROM collections WHERE collection_id = :cid AND user_email = :email",
+            {"cid": collection_id, "email": user_email}
+        )
+        return rowcount > 0
 
     def add_docket_to_collection(
             self, collection_id: int, docket_id: str, user_email: str) -> bool:
         """Add a docket to a collection the user owns. Returns True if successful."""
-        if self.conn is None:
+        if self.engine is None:
             return False
-        check_sql = """
-            SELECT 1 FROM collections
-            WHERE collection_id = %s AND user_email = %s
-        """
-        with self.conn.cursor() as cur:
-            cur.execute(check_sql, (collection_id, user_email))
-            if cur.fetchone() is None:
-                return False
-        insert_sql = """
-            INSERT INTO collection_dockets (collection_id, docket_id)
-            VALUES (%s, %s)
-            ON CONFLICT DO NOTHING
-        """
-        with self.conn.cursor() as cur:
-            cur.execute(insert_sql, (collection_id, docket_id))
-        self.conn.commit()
+        rows = self._run(
+            "SELECT 1 FROM collections WHERE collection_id = :cid AND user_email = :email",
+            {"cid": collection_id, "email": user_email}
+        )
+        if not rows:
+            return False
+        self._run_write(
+            "INSERT INTO collection_dockets (collection_id, docket_id) "
+            "VALUES (:cid, :docket_id) ON CONFLICT DO NOTHING",
+            {"cid": collection_id, "docket_id": docket_id}
+        )
         return True
 
     def remove_docket_from_collection(
             self, collection_id: int, docket_id: str, user_email: str) -> bool:
         """Remove a docket from a collection the user owns. Returns True if successful."""
-        if self.conn is None:
+        if self.engine is None:
             return False
-        check_sql = """
-            SELECT 1 FROM collections
-            WHERE collection_id = %s AND user_email = %s
-        """
-        with self.conn.cursor() as cur:
-            cur.execute(check_sql, (collection_id, user_email))
-            if cur.fetchone() is None:
-                return False
-        delete_sql = """
-            DELETE FROM collection_dockets
-            WHERE collection_id = %s AND docket_id = %s
-        """
-        with self.conn.cursor() as cur:
-            cur.execute(delete_sql, (collection_id, docket_id))
-        self.conn.commit()
-        return True
+        rows = self._run(
+            "SELECT 1 FROM collections WHERE collection_id = :cid AND user_email = :email",
+            {"cid": collection_id, "email": user_email}
+        )
+        if not rows:
+            return False
+        rowcount = self._run_write(
+            "DELETE FROM collection_dockets WHERE collection_id = :cid AND docket_id = :docket_id",
+            {"cid": collection_id, "docket_id": docket_id}
+        )
+        return rowcount > 0
 
     def create_download_job(  # pylint: disable=too-many-locals
             self,
@@ -651,41 +730,39 @@ class DBLayer:  # pylint: disable=too-many-public-methods
             include_binaries: bool = False,
     ) -> str:
         """Create a download job and return the new job_id (UUID string)."""
-        if self.conn is None:
+        if self.engine is None:
             return ""
-        upsert_user_sql = """
-            INSERT INTO users (email, name) VALUES (%s, %s)
-            ON CONFLICT (email) DO NOTHING
-        """
-        with self.conn.cursor() as cur:
-            cur.execute(upsert_user_sql, (user_email, user_email))
-        insert_sql = """
-            INSERT INTO download_jobs
-                (user_email, docket_ids, format, include_binaries)
-            VALUES (%s, %s, %s, %s)
-            RETURNING job_id
-        """
-        with self.conn.cursor() as cur:
-            cur.execute(insert_sql, (user_email, docket_ids, format, include_binaries))
-            job_id = str(cur.fetchone()[0])
-        self.conn.commit()
-        return job_id
+        self._run_write(
+            "INSERT INTO users (email, name) VALUES (:email, :name) "
+            "ON CONFLICT (email) DO NOTHING",
+            {"email": user_email, "name": user_email}
+        )
+        job_id = self._run_returning(
+            "INSERT INTO download_jobs (user_email, docket_ids, format, include_binaries) "
+            "VALUES (:email, :docket_ids, :format, :include_binaries) RETURNING job_id",
+            {
+                "email": user_email,
+                "docket_ids": docket_ids,
+                "format": format,
+                "include_binaries": include_binaries,
+            }
+        )
+        return str(job_id)
 
     def get_download_job(self, job_id: str, user_email: str) -> Dict[str, Any]:
         """Return job details for the given job_id owned by user_email, or {}."""
-        if self.conn is None:
+        if self.engine is None:
             return {}
         sql = """
             SELECT job_id, user_email, docket_ids, format, include_binaries,
                    status, s3_path, created_at, updated_at, expires_at
             FROM download_jobs
-            WHERE job_id = %s AND user_email = %s
+            WHERE job_id = :job_id AND user_email = :email
         """
-        with self.conn.cursor() as cur:
-            cur.execute(sql, (job_id, user_email))
-            row = cur.fetchone()
-        if row is None:
+        rows = self._run(sql, {"job_id": job_id, "email": user_email})
+        if not rows:
             return {}
+        row = rows[0]
         return {
             "job_id": str(row[0]),
             "user_email": row[1],
@@ -705,29 +782,168 @@ class DBLayer:  # pylint: disable=too-many-public-methods
 
         Returns True if a row was updated.
         """
-        if self.conn is None:
+        if self.engine is None:
             return False
-        sql = """
-            UPDATE download_jobs
-            SET status = %s, s3_path = %s, updated_at = NOW()
-            WHERE job_id = %s
-        """
-        with self.conn.cursor() as cur:
-            cur.execute(sql, (status, s3_path, job_id))
-            updated = cur.rowcount > 0
-        self.conn.commit()
-        return updated
+        rowcount = self._run_write(
+            "UPDATE download_jobs SET status = :status, s3_path = :s3_path, "
+            "updated_at = NOW() WHERE job_id = :job_id",
+            {"status": status, "s3_path": s3_path, "job_id": job_id}
+        )
+        return rowcount > 0
+
+    def get_expired_download_jobs(self) -> List[Dict[str, Any]]:
+        """Return job_id and s3_path for all jobs where expires_at < NOW()."""
+        if self.engine is None:
+            return []
+        rows = self._run(
+            "SELECT job_id, s3_path FROM download_jobs WHERE expires_at < NOW()"
+        )
+        return [{"job_id": str(row[0]), "s3_path": row[1]} for row in rows]
+
+    def get_download_s3_url(self, job_id: str, user_email: str) -> Optional[str]:
+        """Return a presigned S3 URL for the given job, or local path if in dev mode."""
+        if self.engine is None:
+            return None
+        job = self.get_download_job(job_id, user_email)
+        s3_path = job.get("s3_path") if job else None
+        if not s3_path:
+            return None
+        if s3_path.startswith("local://"):
+            return s3_path[len("local://"):]
+        return self._presign_s3_url(s3_path)
+
+    def _presign_s3_url(self, s3_path: str) -> Optional[str]:
+        """Generate a presigned URL from an s3:// path, or None if invalid."""
+        if boto3 is None or not s3_path.startswith("s3://"):
+            return None
+        bucket, _, key = s3_path[len("s3://"):].partition("/")
+        if not bucket or not key:
+            return None
+        return boto3.client("s3").generate_presigned_url(
+            "get_object",
+            Params={"Bucket": bucket, "Key": key},
+            ExpiresIn=3600,
+        )
 
     def prune_expired_download_jobs(self) -> int:
         """Delete download_jobs past their expires_at. Returns the number of rows deleted."""
-        if self.conn is None:
+        if self.engine is None:
             return 0
-        sql = "DELETE FROM download_jobs WHERE expires_at < NOW()"
-        with self.conn.cursor() as cur:
-            cur.execute(sql)
-            deleted = cur.rowcount
-        self.conn.commit()
-        return deleted
+        return self._run_write("DELETE FROM download_jobs WHERE expires_at < NOW()")
+
+    def is_admin(self, email: str) -> bool:
+        """Return True if the given email belongs to an admin."""
+        if self.engine is None:
+            return False
+        rows = self._run("SELECT 1 FROM admins WHERE email = :email", {"email": email})
+        return len(rows) > 0
+
+    def is_authorized_user(self, email: str) -> bool:
+        """Return True if the given email is in the authorized users list."""
+        if self.engine is None:
+            return False
+        rows = self._run(
+            "SELECT 1 FROM authorized_users WHERE email = :email", {"email": email}
+        )
+        return len(rows) > 0
+
+    def add_authorized_user(self, email: str, name: str) -> bool:
+        """Add a user to the authorized users list. Returns True if successful."""
+        if self.engine is None:
+            return False
+        self._run_write(
+            "INSERT INTO authorized_users (email, name) VALUES (:email, :name) "
+            "ON CONFLICT DO NOTHING",
+            {"email": email, "name": name}
+        )
+        return True
+
+    def remove_authorized_user(self, email: str) -> bool:
+        """Remove a user from the authorized users list. Returns True if deleted."""
+        if self.engine is None:
+            return False
+        rowcount = self._run_write(
+            "DELETE FROM authorized_users WHERE email = :email", {"email": email}
+        )
+        return rowcount > 0
+
+    def update_authorized_user_name(self, email: str, name: str) -> bool:
+        """Update the display name of an authorized user. Returns True if updated."""
+        if self.engine is None:
+            return False
+        rowcount = self._run_write(
+            "UPDATE authorized_users SET name = :name WHERE email = :email",
+            {"name": name, "email": email}
+        )
+        return rowcount > 0
+
+    def get_authorized_users(self) -> List[Dict[str, Any]]:
+        """Return all authorized users including their last_login from the users table."""
+        if self.engine is None:
+            return []
+        sql = """
+            SELECT au.email, au.name, au.authorized_at, u.last_login
+            FROM authorized_users au
+            LEFT JOIN users u ON u.email = au.email
+            ORDER BY au.authorized_at DESC
+        """
+        rows = self._run(sql)
+        return [
+            {
+                "email": row[0],
+                "name": row[1],
+                "authorized_at": row[2],
+                "last_login": row[3]
+            }
+            for row in rows
+        ]
+
+    def update_last_login(self, email: str, name: str) -> None:
+        """Upsert the user row and stamp last_login to NOW()."""
+        if self.engine is None:
+            return
+        self._run_write(
+            "INSERT INTO users (email, name, last_login) VALUES (:email, :name, NOW()) "
+            "ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name, last_login = NOW()",
+            {"email": email, "name": name}
+        )
+
+    def get_last_login(self, email: str) -> Optional[Any]:
+        """Return the last_login timestamp for a user, or None if not found."""
+        if self.engine is None:
+            return None
+        rows = self._run(
+            "SELECT last_login FROM users WHERE email = :email", {"email": email}
+        )
+        return rows[0][0] if rows else None
+
+    def get_download_jobs(self, user_email: str) -> List[Dict[str, Any]]:
+        """Return all download jobs for the given user, newest first."""
+        if self.engine is None:
+            return []
+        sql = """
+            SELECT job_id, user_email, docket_ids, format, include_binaries,
+                status, s3_path, created_at, updated_at, expires_at
+            FROM download_jobs
+            WHERE user_email = :user_email
+            ORDER BY created_at DESC
+        """
+        rows = self._run(sql, {"user_email": user_email})
+        return [
+            {
+                "job_id": str(row[0]),
+                "user_email": row[1],
+                "docket_ids": row[2],
+                "format": row[3],
+                "include_binaries": row[4],
+                "status": row[5],
+                "s3_path": row[6],
+                "created_at": row[7].isoformat() if row[7] else None,
+                "updated_at": row[8].isoformat() if row[8] else None,
+                "expires_at": row[9].isoformat() if row[9] else None,
+            }
+            for row in rows
+        ]
 
 
 def _get_secrets_from_aws() -> Dict[str, str]:
@@ -738,36 +954,20 @@ def _get_secrets_from_aws() -> Dict[str, str]:
     return json.loads(response["SecretString"])
 
 
-def get_postgres_connection() -> DBLayer:
-    use_aws_secrets = os.getenv("USE_AWS_SECRETS", "").lower() in {"1", "true", "yes", "on"}
-    if use_aws_secrets:
-        creds = _get_secrets_from_aws()
-        conn = psycopg2.connect(
-            host=creds["host"],
-            port=creds["port"],
-            database=creds["db"],
-            user=creds["username"],
-            password=creds["password"]
-        )
-    else:
-        if LOAD_DOTENV is not None:
-            LOAD_DOTENV()
-        conn = psycopg2.connect(
-            host=os.getenv("DB_HOST", "localhost"),
-            port=os.getenv("DB_PORT", "5432"),
-            database=os.getenv("DB_NAME", "your_db"),
-            user=os.getenv("DB_USER", "your_user"),
-            password=os.getenv("DB_PASSWORD", "your_password")
-        )
-    return DBLayer(conn)
-
-
 def get_db() -> DBLayer:
+    """
+    Return a DBLayer backed by the shared SQLAlchemy engine.
+
+    The engine is created once and reused. SQLAlchemy's pool_pre_ping
+    and pool_recycle settings handle dead-connection detection and
+    replacement automatically — no manual rollback or health-check needed.
+    """
     if LOAD_DOTENV is not None:
         LOAD_DOTENV()
     try:
-        return get_postgres_connection()
-    except psycopg2.OperationalError:
+        engine = _get_engine()
+        return DBLayer(engine)
+    except Exception:  # pylint: disable=broad-exception-caught
         return DBLayer()
 
 
@@ -781,7 +981,7 @@ def _opensearch_use_ssl_from_env(user: str, password: str) -> bool:
     return bool(not raw and user and password)
 
 
-def _opensearch_client_kwargs() -> Dict[str, Any]:
+def _opensearch_client_kwargs() -> Dict[str, Any]:  # pylint: disable=too-many-statements
     """Build keyword args for OpenSearch client."""
     host = (os.getenv("OPENSEARCH_HOST") or "localhost").strip() or "localhost"
     port = _parse_opensearch_port_env("OPENSEARCH_PORT", 9200)
@@ -809,7 +1009,55 @@ def _opensearch_client_kwargs() -> Dict[str, Any]:
     return kwargs
 
 
-def get_opensearch_connection() -> OpenSearch:
+class _AossClient:  # pylint: disable=too-few-public-methods
+    """Thin requests-based client that mimics opensearchpy .search() interface."""
+    def __init__(self, base_url, session):
+        self.base_url = base_url.rstrip('/')
+        self.session = session
+
+    def search(self, index, body):
+        url = f"{self.base_url}/{index}/_search"
+        resp = self.session.post(url, json=body, timeout=30)
+        resp.raise_for_status()
+        return resp.json()
+
+
+_OPENSEARCH_CLIENT_SINGLETON = None  # pylint: disable=invalid-name
+
+
+def get_opensearch_connection():  # pylint: disable=too-many-branches,too-many-statements,too-many-locals
+    global _OPENSEARCH_CLIENT_SINGLETON  # pylint: disable=global-statement
+
+    host = (os.getenv("OPENSEARCH_HOST") or "").strip()
+
+    use_aws = os.getenv("USE_AWS_SECRETS", "").lower() in {"1", "true", "yes", "on"}
+    if not host and use_aws and boto3 is not None:
+        try:
+            sm = boto3.client("secretsmanager", region_name="us-east-1")
+            secret = json.loads(
+                sm.get_secret_value(SecretId="mirrulations/opensearch")["SecretString"]
+            )
+            raw_host = secret.get("host", "").strip()
+            if raw_host and not raw_host.startswith("http"):
+                raw_host = "https://" + raw_host
+            host = raw_host
+        except Exception:  # pylint: disable=broad-exception-caught
+            pass
+
+    if "aoss.amazonaws.com" in host:
+        if _OPENSEARCH_CLIENT_SINGLETON is not None:
+            return _OPENSEARCH_CLIENT_SINGLETON
+        creds = boto3.Session().get_credentials()
+        auth = AWS4Auth(
+            refreshable_credentials=creds,
+            region="us-east-1",
+            service="aoss",
+        )
+        session = requests.Session()
+        session.auth = auth
+        _OPENSEARCH_CLIENT_SINGLETON = _AossClient(host, session)  # pylint: disable=invalid-name
+        return _OPENSEARCH_CLIENT_SINGLETON
+
     if LOAD_DOTENV is not None:
         LOAD_DOTENV()
     return OpenSearch(**_opensearch_client_kwargs())

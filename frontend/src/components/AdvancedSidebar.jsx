@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import { motion } from "motion/react"
 import Calendar from 'react-calendar';
 import 'react-calendar/dist/Calendar.css';
@@ -49,7 +49,9 @@ export default function AdvancedSidebar({
   activeCount,
 }) {
   const docTypes = ["Rulemaking", "Nonrulemaking"];
-  const [value, setOnchange] = useState([new Date(), new Date()]);
+  /** Which date field owns the open calendar: single-date pick, no range drag. */
+  const [calendarFor, setCalendarFor] = useState(null);
+  const dateRangeRef = useRef(null);
   //const statuses = ["Open", "Closed", "Pending"];
   const [agencyOrder, setAgencyOrder] = useState([]);
   const [selectedTitle, setSelectedTitle] = useState("");
@@ -84,6 +86,24 @@ export default function AdvancedSidebar({
       })
       .finally(() => setAgenciesLoading(false));
   }, []);
+
+  useEffect(() => {
+    if (!calendarFor) return undefined;
+
+    const handlePointerDown = (event) => {
+      if (!dateRangeRef.current?.contains(event.target)) {
+        setCalendarFor(null);
+      }
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("touchstart", handlePointerDown);
+
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("touchstart", handlePointerDown);
+    };
+  }, [calendarFor]);
 
   const selectedCfrList = useMemo(() => {
     return Object.entries(selectedCfrParts).flatMap(([title, parts]) =>
@@ -197,6 +217,15 @@ export default function AdvancedSidebar({
     return orderedAgencies.slice(0, minVisible);
   }, [agencySearch, orderedAgencies, selectedAgencies.size]);
 
+  const selectedAgenciesBelowSearch = useMemo(() => {
+    if (!agencySearch.trim()) return [];
+
+    const visibleCodes = new Set(visibleAgencies.map((agency) => agency.code));
+    return orderedAgencies.filter(
+      (agency) => selectedAgencies.has(agency.code) && !visibleCodes.has(agency.code)
+    );
+  }, [agencySearch, orderedAgencies, selectedAgencies, visibleAgencies]);
+
   const toggleAgency = (code) => {
     setSelectedAgencies((prev) => {
       const next = new Set(prev);
@@ -221,6 +250,24 @@ export default function AdvancedSidebar({
     }
     return val;
   };
+
+  const isFullDate = (str) => {
+    return /^\d{4}-\d{2}-\d{2}$/.test(str);
+  };
+
+  const calendarActiveDate = useMemo(() => {
+    if (!calendarFor) return null;
+    const raw = calendarFor === "from" ? yearFrom : yearTo;
+    const normalized =
+      calendarFor === "from"
+        ? normalizeDate(raw || "", false)
+        : normalizeDate(raw || "", true);
+    if (isFullDate(normalized)) {
+      const [y, m, d] = normalized.split("-").map(Number);
+      return new Date(y, m - 1, d);
+    }
+    return null;
+  }, [calendarFor, yearFrom, yearTo]);
 
   const filteredCfrParts = useMemo(() => {
     const rawQuery = cfrSearch.trim();
@@ -306,7 +353,7 @@ export default function AdvancedSidebar({
                 onClick={() => {
                   setYearFrom("");
                   setYearTo("");
-                  setOnchange([null, null]);
+                  setCalendarFor(null);
                 }}
               >
                 All time
@@ -322,7 +369,7 @@ export default function AdvancedSidebar({
               const format = (d) => d.toLocaleDateString("en-CA");
               setYearFrom(format(start));
               setYearTo(format(end));
-              setOnchange([start, end]);
+              setCalendarFor(null);
             }}
           >
             Past Year
@@ -339,7 +386,7 @@ export default function AdvancedSidebar({
               const format = (d) => d.toLocaleDateString("en-CA");
               setYearFrom(format(start));
               setYearTo(format(end));
-              setOnchange([start, end]);
+              setCalendarFor(null);
             }}
           >
             Past 6 Months
@@ -347,76 +394,45 @@ export default function AdvancedSidebar({
 
             </div>
 
+            <div className="dateRangePicker" ref={dateRangeRef}>
             <div className="row">
             <input
             value={yearFrom}
-            onChange={(e) => {
-              const raw = e.target.value;
-              setYearFrom(raw);
-
-              // Only normalize + sync calendar once it looks complete
-              const normalized = normalizeDate(raw, false);
-              const isYearOnly = /^\d{4}$/.test(raw.trim());
-
-              if (isYearOnly) {
-                const endNorm = `${raw.trim()}-12-31`;
-                setYearTo(endNorm);                          // auto-fill To
-                setOnchange([new Date(normalized), new Date(endNorm)]);
-              } else if (normalized && yearTo) {
-                setOnchange([new Date(normalized), new Date(yearTo)]);
-              }
-            }}
+            aria-label="Start date"
+            onFocus={() => setCalendarFor("from")}
+            onClick={() => setCalendarFor("from")}
+            onChange={(e) => setYearFrom(e.target.value)}
             placeholder="YYYY or YYYY-MM-DD"
           />
 
           <input
             value={yearTo}
-            onChange={(e) => {
-              const raw = e.target.value;
-              setYearTo(raw);
-
-              const normalized = normalizeDate(raw, true);
-              const isYearOnly = /^\d{4}$/.test(raw.trim());
-
-              if (isYearOnly) {
-                const startNorm = yearFrom || `${raw.trim()}-01-01`;
-                setOnchange([new Date(startNorm), new Date(normalized)]);
-              } else if (yearFrom && normalized) {
-                setOnchange([new Date(yearFrom), new Date(normalized)]);
-              }
-            }}
+            aria-label="End date"
+            onFocus={() => setCalendarFor("to")}
+            onClick={() => setCalendarFor("to")}
+            onChange={(e) => setYearTo(e.target.value)}
             placeholder="YYYY or YYYY-MM-DD"
           />
             </div>
 
+            {calendarFor && (
             <div className="calendar-div">
               <Calendar
-                selectRange={true}
-                onChange={(range) => {
-                  if (!Array.isArray(range)) return;
-
-                  let [start, end] = range;
-
-                  // Handle first click (no end yet)
-                  if (!end) {
-                    setOnchange([start, null]);
-                    setYearFrom(start.toISOString().split("T")[0]);
-                    return;
+                selectRange={false}
+                value={calendarActiveDate}
+                onChange={(picked) => {
+                  if (!(picked instanceof Date)) return;
+                  const ymd = picked.toLocaleDateString("en-CA");
+                  if (calendarFor === "from") {
+                    setYearFrom(ymd);
+                  } else {
+                    setYearTo(ymd);
                   }
-
-                  // Auto-swap if user selects backwards
-                  if (start > end) {
-                    [start, end] = [end, start];
-                  }
-
-                  const format = (d) => d.toLocaleDateString("en-CA");
-
-                  setOnchange([start, end]);
-                  setYearFrom(format(start));
-                  setYearTo(format(end));
+                  setCalendarFor(null);
                 }}
-                value={value}
               />
+            </div>
+            )}
             </div>
           </CollapsibleSection>
 
@@ -452,6 +468,24 @@ export default function AdvancedSidebar({
                     </span>
                   </label>
                 ))}
+
+                {selectedAgenciesBelowSearch.length > 0 && (
+                  <>
+                    <div className="agencyListLabel">Selected agencies</div>
+                    {selectedAgenciesBelowSearch.map((a) => (
+                      <label key={`selected-${a.code}`} className="check">
+                        <input
+                          type="checkbox"
+                          checked={selectedAgencies.has(a.code)}
+                          onChange={() => toggleAgency(a.code)}
+                        />
+                        <span>
+                          {a.code} — {a.name}
+                        </span>
+                      </label>
+                    ))}
+                  </>
+                )}
               </div>
             )}
 
@@ -531,10 +565,24 @@ export default function AdvancedSidebar({
           </section>
 
           <div className="actions">
-            <button className="btn btn-ghost" onClick={clearAdvanced}>
+            <button
+              className="btn btn-ghost"
+              type="button"
+              onClick={() => {
+                setCalendarFor(null);
+                clearAdvanced();
+              }}
+            >
               Clear
             </button>
-            <button className="btn btn-primary" onClick={applyAdvanced}>
+            <button
+              className="btn btn-primary"
+              type="button"
+              onClick={() => {
+                setCalendarFor(null);
+                applyAdvanced();
+              }}
+            >
               Apply
             </button>
           </div>

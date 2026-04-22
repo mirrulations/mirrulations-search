@@ -61,35 +61,9 @@ DB_PORT=5432
 DB_NAME=mirrulations
 DB_USER=your_macOS_username (You can find this by doing `whoami` in your terminal)
 DB_PASSWORD=
-```
-
-You must run ./db/setup_postgres.sh before to have created the actual database.
-
-This also requires python-dotenv to be intalled which is now added in the requirements.txt file.
-
-Or run pip install python-dotenv in your .venv.
-
-Then run:
-```bash
-./dev_up.sh
-```
-
-## OAuth Configuration
- 
-In both dev and prod, the system will get configuration options from a `.env` file. Edit your current `.env` file to include these following values. 
- 
-* `BASE_URL`: The base URL of your application. This must match one of the redirect URIs configured in the Google Cloud Console.
-  * `http://localhost:80` in dev
-  * `https://<your-subdomain>.moraviancs.click` in prod
-* `GOOGLE_CLIENT_ID`: The OAuth 2.0 Client ID from Google Cloud Console
-* `GOOGLE_CLIENT_SECRET`: The OAuth 2.0 Client Secret from Google Cloud Console
-
-Before running ./dev_up.sh, add to the .env file in the project root:
-
-```
-BASE_URL=http://localhost
-GOOGLE_CLIENT_ID=<Get from 1Password under Google Cloud Console>
-GOOGLE_CLIENT_SECRET=<get from 1Password under Google Cloud Console>
+BASE_URL:http://localhost (This is the base URL of your application. Localhost in dev)
+GOOGLE_CLIENT_ID:The <client_id> value from OAuth Client JSON in 1Password
+GOOGLE_CLIENT_SECRET:The <client_secret> value from OAuth Client JSON in 1Password (this value starts with GOC..) 
 ```
 
 Now install dependencies:
@@ -100,5 +74,12 @@ pip install -r requirements.txt
 Run this command if rollout issues persist: 
 ```
 npm install react-router-dom
+```
+
+You must run ./db/setup_postgres.sh before to have created the actual database.
+
+Then run:
+```bash
+./dev_up.sh
 ```
 

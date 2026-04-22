@@ -1,0 +1,463 @@
+   .admin-page {
+    min-height: 100vh;
+    background: #0f172a;
+    color: #e2e8f0;
+    font-family: inherit;
+}
+
+/* ── Header ── */
+.admin-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 2rem;
+    height: 56px;
+    background: #0f172a;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+.admin-brand {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: #e2e8f0;
+    text-decoration: none;
+    letter-spacing: -0.01em;
+}
+
+.admin-brand:hover {
+    color: #a78bfa;
+}
+
+.admin-header-right {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.admin-badge {
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    background: rgba(167, 139, 250, 0.18);
+    color: #a78bfa;
+    border: 1px solid rgba(167, 139, 250, 0.35);
+    border-radius: 999px;
+    padding: 2px 10px;
+}
+
+.admin-user-name {
+    font-size: 0.9rem;
+    color: #94a3b8;
+}
+
+.admin-logout-btn {
+    font-size: 0.85rem;
+    color: #94a3b8;
+    text-decoration: none;
+    padding: 4px 12px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 6px;
+    transition: color 0.15s, border-color 0.15s;
+}
+
+.admin-logout-btn:hover {
+    color: #e2e8f0;
+    border-color: rgba(255, 255, 255, 0.28);
+}
+
+/* ── Main content ── */
+.admin-main {
+    max-width: 820px;
+    margin: 0 auto;
+    padding: 2.5rem 1.5rem 4rem;
+}
+
+.admin-page-title {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: #f1f5f9;
+    margin: 0 0 0.4rem;
+}
+
+.admin-page-subtitle {
+    font-size: 0.95rem;
+    color: #64748b;
+    margin: 0 0 2rem;
+}
+
+/* ── Card ── */
+.admin-card {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+}
+
+.admin-card-title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: #cbd5e1;
+    margin: 0 0 1.1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+}
+
+/* ── Add form ── */
+.admin-add-form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.admin-form-row {
+    display: flex;
+    gap: 0.75rem;
+    align-items: flex-end;
+    flex-wrap: wrap;
+}
+
+.admin-form-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    flex: 1;
+    min-width: 180px;
+}
+
+.admin-label {
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: #94a3b8;
+    letter-spacing: 0.01em;
+}
+
+.admin-input {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    color: #e2e8f0;
+    font-size: 0.9rem;
+    padding: 0.55rem 0.75rem;
+    outline: none;
+    transition: border-color 0.15s, background 0.15s;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.admin-input::placeholder {
+    color: #475569;
+}
+
+.admin-input:focus {
+    border-color: rgba(167, 139, 250, 0.5);
+    background: rgba(255, 255, 255, 0.07);
+}
+
+.admin-input:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.admin-add-btn {
+    background: #7c3aed;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 0.55rem 1.25rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, opacity 0.15s;
+    white-space: nowrap;
+    align-self: flex-end;
+    height: 38px;
+}
+
+.admin-add-btn:hover:not(:disabled) {
+    background: #6d28d9;
+}
+
+.admin-add-btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.admin-form-error {
+    font-size: 0.85rem;
+    color: #f87171;
+    margin: 0.25rem 0 0;
+    overflow: hidden;
+}
+
+.admin-form-success {
+    font-size: 0.85rem;
+    color: #4ade80;
+    margin: 0.25rem 0 0;
+    overflow: hidden;
+}
+
+/* ── Users list ── */
+.admin-user-count {
+    background: rgba(100, 116, 139, 0.18);
+    color: #94a3b8;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 1px 8px;
+}
+
+.admin-list-loading,
+.admin-empty {
+    font-size: 0.9rem;
+    color: #64748b;
+    padding: 0.5rem 0;
+}
+
+.admin-user-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.admin-user-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 8px;
+    padding: 0.7rem 1rem;
+    gap: 1rem;
+    overflow: hidden;
+}
+
+.admin-user-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.admin-user-item-name {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #e2e8f0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.admin-user-item-email {
+    font-size: 0.8rem;
+    color: #64748b;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.admin-user-meta {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-shrink: 0;
+}
+
+.admin-user-date {
+    font-size: 0.78rem;
+    color: #475569;
+    white-space: nowrap;
+}
+
+.admin-remove-btn {
+    background: transparent;
+    border: 1px solid rgba(239, 68, 68, 0.35);
+    color: #f87171;
+    border-radius: 6px;
+    padding: 3px 10px;
+    font-size: 0.78rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+    white-space: nowrap;
+}
+
+.admin-remove-btn:hover:not(:disabled) {
+    background: rgba(239, 68, 68, 0.1);
+    border-color: rgba(239, 68, 68, 0.6);
+}
+
+.admin-remove-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+/* ── Access denied screen ── */
+.admin-page .admin-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    font-size: 0.95rem;
+    color: #64748b;
+}
+
+.admin-denied-box {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    padding: 2rem;
+    text-align: center;
+    gap: 0.75rem;
+}
+
+.admin-denied-icon {
+    font-size: 2.5rem;
+    margin-bottom: 0.25rem;
+}
+
+.admin-denied-title {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: #f1f5f9;
+    margin: 0;
+}
+
+.admin-denied-message {
+    font-size: 0.95rem;
+    color: #64748b;
+    max-width: 380px;
+    margin: 0;
+}
+
+.admin-denied-message--error {
+    color: #f87171;
+}
+
+.admin-denied-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 0.5rem;
+}
+
+/* Matches the Google sign-in button style from Home.jsx */
+.admin-google-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.55rem;
+    background: #fff;
+    color: #1e293b;
+    font-size: 0.9rem;
+    font-weight: 600;
+    border: none;
+    border-radius: 8px;
+    padding: 0.55rem 1.2rem;
+    cursor: pointer;
+    text-decoration: none;
+    transition: background 0.15s, transform 0.1s;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+.admin-google-btn:hover {
+    background: #f1f5f9;
+    transform: scale(1.03);
+}
+
+.admin-google-icon {
+    display: flex;
+    align-items: center;
+}
+
+.admin-back-link {
+    font-size: 0.85rem;
+    color: #64748b;
+    text-decoration: none;
+    transition: color 0.15s;
+}
+
+.admin-back-link:hover {
+    color: #94a3b8;
+}
+
+
+.admin-edit-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.admin-edit-hint {
+    font-size: 0.75rem;
+    font-weight: 400;
+    color: var(--text-muted, #888);
+    margin-left: 0.75rem;
+}
+
+.admin-user-edit-btn {
+    background: #7c3aed;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 0.33rem 1rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, opacity 0.15s;
+    white-space: nowrap;
+    align-self: flex-end;
+    height: 38px;
+}
+
+.admin-cancel-edit-btn {
+    background: #980303;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 0.33rem 1rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, opacity 0.15s;
+    white-space: nowrap;
+    align-self: flex-end;
+    height: 38px;
+}
+
+/* ── Responsive ── */
+@media (max-width: 600px) {
+    .admin-form-row {
+        flex-direction: column;
+    }
+
+    .admin-add-btn {
+        width: 100%;
+        height: auto;
+        padding: 0.65rem;
+    }
+
+    .admin-user-item {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .admin-user-meta {
+        width: 100%;
+        justify-content: space-between;
+    }
+
+    .admin-header {
+        padding: 0 1rem;
+    }
+}

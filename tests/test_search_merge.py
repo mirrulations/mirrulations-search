@@ -269,6 +269,10 @@ class _FakeDbCollectionDockets:
             }
         ]
 
+    def get_docket_document_comment_totals(self, docket_ids, opensearch_client=None):  # pylint: disable=unused-argument
+        return {
+            "DOCKET-1": {"document_total_count": 5, "comment_total_count": 3}
+        }
 
 def test_get_collection_dockets_non_empty_sanitizes_and_paginates():
     """Branch with docket_ids loads rows, sanitizes modify_date, returns slice + pagination."""
@@ -278,3 +282,5 @@ def test_get_collection_dockets_non_empty_sanitizes_and_paginates():
     assert out["pagination"]["total_pages"] == 1
     assert out["results"][0]["modify_date"] == "2024-03-01"
     assert "cfrPart" in out["results"][0]
+    assert out["results"][0]["documentDenominator"] == 5
+    assert out["results"][0]["commentDenominator"] == 3

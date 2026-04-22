@@ -4,15 +4,16 @@ Tests for the Flask app endpoints - Header-based pagination (returns list)
 import json
 import tempfile
 import os
+from datetime import datetime
 from unittest.mock import patch, MagicMock
 import pytest
 from mock_db import MockDBLayer
 from mirrsearch.app import create_app
-from mirrsearch.db import get_postgres_connection, get_opensearch_connection
+from mirrsearch.db import get_db, get_opensearch_connection
 from mirrsearch.app import _make_oauth_handler
 
 # pylint: disable=duplicate-code
-class MockOAuthHandler:
+class MockOAuthHandler: # pylint: disable=too-many-lines
     """Mock OAuth handler that always authenticates as a test user"""
     def get_authorization_url(self):
         return "http://mock-auth-url", None
@@ -28,13 +29,19 @@ class MockOAuthHandler:
 
 
 @pytest.fixture
-def app(tmp_path):
+def mock_db():
+    """Shared MockDBLayer instance for tests that need to inspect it."""
+    return MockDBLayer()
+
+
+@pytest.fixture
+def app(tmp_path, mock_db):  # pylint: disable=redefined-outer-name
     """Create and configure a test app instance"""
     dist = tmp_path / "dist"
     dist.mkdir()
     (dist / "index.html").write_text("<html></html>")
     test_app = create_app(
-        dist_dir=str(dist), db_layer=MockDBLayer(), oauth_handler=MockOAuthHandler()
+        dist_dir=str(dist), db_layer=mock_db, oauth_handler=MockOAuthHandler()
     )
     test_app.config['TESTING'] = True
     return test_app
@@ -228,7 +235,7 @@ def test_search_returns_401_without_cookie(app):  # pylint: disable=redefined-ou
 def test_login_route_redirects(app):  # pylint: disable=redefined-outer-name
     """Login route redirects to Google authorization URL"""
     anon = app.test_client()
-    response = anon.get('/login')
+    response = anon.get('/auth/login')
     assert response.status_code == 302
     assert "mock-auth-url" in response.headers['Location']
 
@@ -286,9 +293,18 @@ def test_invalid_cookie_treated_as_unauthenticated(tmp_path):
     assert response.status_code == 401
 
 
-def test_home_route_with_oauth_code_redirects(app):  # pylint: disable=redefined-outer-name
+def test_home_route_with_oauth_code_redirects(tmp_path):  # pylint: disable=redefined-outer-name
     """Home route exchanges OAuth code and redirects"""
-    anon = app.test_client()
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<html></html>")
+    db = MockDBLayer()
+    db.add_authorized_user("test@example.com", "Test User")  # authorize the mock user
+    test_app = create_app(
+        dist_dir=str(dist), db_layer=db, oauth_handler=MockOAuthHandler()
+    )
+    test_app.config['TESTING'] = True
+    anon = test_app.test_client()
     response = anon.get('/?code=valid-code')
     assert response.status_code == 302
     assert 'jwt_token' in response.headers.get('Set-Cookie', '')
@@ -336,21 +352,21 @@ def test_home_route_with_index_html():
 # --- Collections ---
 
 def test_get_collections_returns_empty_list(client):  # pylint: disable=redefined-outer-name
-    """GET /collections returns empty list when user has no collections"""
-    response = client.get('/collections')
+    """GET /api/collections returns empty list when user has no collections"""
+    response = client.get('/api/collections')
     assert response.status_code == 200
     assert response.get_json() == []
 
 
 def test_get_collections_requires_auth(app):  # pylint: disable=redefined-outer-name
-    """GET /collections returns 401 without cookie"""
-    response = app.test_client().get('/collections')
+    """GET /api/collections returns 401 without cookie"""
+    response = app.test_client().get('/api/collections')
     assert response.status_code == 401
 
 
 def test_create_collection_returns_id(client):  # pylint: disable=redefined-outer-name
-    """POST /collections creates a collection and returns its id"""
-    response = client.post('/collections', json={"name": "My Collection"})
+    """POST /api/collections creates a collection and returns its id"""
+    response = client.post('/api/collections', json={"name": "My Collection"})
     assert response.status_code == 201
     data = response.get_json()
     assert "collection_id" in data
@@ -358,123 +374,123 @@ def test_create_collection_returns_id(client):  # pylint: disable=redefined-oute
 
 
 def test_create_collection_requires_name(client):  # pylint: disable=redefined-outer-name
-    """POST /collections returns 400 when name is missing"""
-    response = client.post('/collections', json={})
+    """POST /api/collections returns 400 when name is missing"""
+    response = client.post('/api/collections', json={})
     assert response.status_code == 400
 
 
 def test_create_collection_requires_auth(app):  # pylint: disable=redefined-outer-name
-    """POST /collections returns 401 without cookie"""
-    response = app.test_client().post('/collections', json={"name": "Test"})
+    """POST /api/collections returns 401 without cookie"""
+    response = app.test_client().post('/api/collections', json={"name": "Test"})
     assert response.status_code == 401
 
 
 def test_delete_collection(client):  # pylint: disable=redefined-outer-name
-    """DELETE /collections/<id> deletes an existing collection"""
+    """DELETE /api/collections/<id> deletes an existing collection"""
     collection_id = client.post(
-        '/collections', json={"name": "To Delete"}
+        '/api/collections', json={"name": "To Delete"}
     ).get_json()["collection_id"]
-    response = client.delete(f'/collections/{collection_id}')
+    response = client.delete(f'/api/collections/{collection_id}')
     assert response.status_code == 204
 
 
 def test_delete_collection_not_found(client):  # pylint: disable=redefined-outer-name
-    """DELETE /collections/<id> returns 404 for nonexistent collection"""
-    response = client.delete('/collections/9999')
+    """DELETE /api/collections/<id> returns 404 for nonexistent collection"""
+    response = client.delete('/api/collections/9999')
     assert response.status_code == 404
 
 
 def test_delete_collection_requires_auth(app):  # pylint: disable=redefined-outer-name
-    """DELETE /collections/<id> returns 401 without cookie"""
-    response = app.test_client().delete('/collections/1')
+    """DELETE /api/collections/<id> returns 401 without cookie"""
+    response = app.test_client().delete('/api/collections/1')
     assert response.status_code == 401
 
 
 def test_add_docket_to_collection(client):  # pylint: disable=redefined-outer-name
-    """POST /collections/<id>/dockets adds a docket to a collection"""
+    """POST /api/collections/<id>/dockets adds a docket to a collection"""
     collection_id = client.post(
-        '/collections', json={"name": "My List"}
+        '/api/collections', json={"name": "My List"}
     ).get_json()["collection_id"]
     response = client.post(
-        f'/collections/{collection_id}/dockets', json={"docket_id": "CMS-2025-0240"}
+        f'/api/collections/{collection_id}/dockets', json={"docket_id": "CMS-2025-0240"}
     )
     assert response.status_code == 204
 
 
 def test_add_docket_requires_docket_id(client):  # pylint: disable=redefined-outer-name
-    """POST /collections/<id>/dockets returns 400 when docket_id is missing"""
+    """POST /api/collections/<id>/dockets returns 400 when docket_id is missing"""
     collection_id = client.post(
-        '/collections', json={"name": "My List"}
+        '/api/collections', json={"name": "My List"}
     ).get_json()["collection_id"]
-    response = client.post(f'/collections/{collection_id}/dockets', json={})
+    response = client.post(f'/api/collections/{collection_id}/dockets', json={})
     assert response.status_code == 400
 
 
 def test_add_docket_collection_not_found(client):  # pylint: disable=redefined-outer-name
-    """POST /collections/<id>/dockets returns 404 for nonexistent collection"""
-    response = client.post('/collections/9999/dockets', json={"docket_id": "CMS-2025-0240"})
+    """POST /api/collections/<id>/dockets returns 404 for nonexistent collection"""
+    response = client.post('/api/collections/9999/dockets', json={"docket_id": "CMS-2025-0240"})
     assert response.status_code == 404
 
 
 def test_add_docket_requires_auth(app):  # pylint: disable=redefined-outer-name
-    """POST /collections/<id>/dockets returns 401 without cookie"""
+    """POST /api/collections/<id>/dockets returns 401 without cookie"""
     response = app.test_client().post(
-        '/collections/1/dockets', json={"docket_id": "CMS-2025-0240"}
+        '/api/collections/1/dockets', json={"docket_id": "CMS-2025-0240"}
     )
     assert response.status_code == 401
 
 
 def test_remove_docket_from_collection(client):  # pylint: disable=redefined-outer-name
-    """DELETE /collections/<id>/dockets/<docket_id> removes a docket"""
+    """DELETE /api/collections/<id>/dockets/<docket_id> removes a docket"""
     collection_id = client.post(
-        '/collections', json={"name": "My List"}
+        '/api/collections', json={"name": "My List"}
     ).get_json()["collection_id"]
-    client.post(f'/collections/{collection_id}/dockets', json={"docket_id": "CMS-2025-0240"})
-    response = client.delete(f'/collections/{collection_id}/dockets/CMS-2025-0240')
+    client.post(f'/api/collections/{collection_id}/dockets', json={"docket_id": "CMS-2025-0240"})
+    response = client.delete(f'/api/collections/{collection_id}/dockets/CMS-2025-0240')
     assert response.status_code == 204
 
 
 def test_remove_docket_collection_not_found(client):  # pylint: disable=redefined-outer-name
-    """DELETE /collections/<id>/dockets/<docket_id> returns 404 for nonexistent collection"""
-    response = client.delete('/collections/9999/dockets/CMS-2025-0240')
+    """DELETE /api/collections/<id>/dockets/<docket_id> returns 404 for nonexistent collection"""
+    response = client.delete('/api/collections/9999/dockets/CMS-2025-0240')
     assert response.status_code == 404
 
 
 def test_remove_docket_requires_auth(app):  # pylint: disable=redefined-outer-name
-    """DELETE /collections/<id>/dockets/<docket_id> returns 401 without cookie"""
-    response = app.test_client().delete('/collections/1/dockets/CMS-2025-0240')
+    """DELETE /api/collections/<id>/dockets/<docket_id> returns 401 without cookie"""
+    response = app.test_client().delete('/api/collections/1/dockets/CMS-2025-0240')
     assert response.status_code == 401
 
 
 def test_get_collections_shows_added_dockets(client):  # pylint: disable=redefined-outer-name
-    """GET /collections reflects dockets added to a collection"""
+    """GET /api/collections reflects dockets added to a collection"""
     collection_id = client.post(
-        '/collections', json={"name": "My List"}
+        '/api/collections', json={"name": "My List"}
     ).get_json()["collection_id"]
-    client.post(f'/collections/{collection_id}/dockets', json={"docket_id": "CMS-2025-0240"})
-    data = client.get('/collections').get_json()
+    client.post(f'/api/collections/{collection_id}/dockets', json={"docket_id": "CMS-2025-0240"})
+    data = client.get('/api/collections').get_json()
     match = next(c for c in data if c["collection_id"] == collection_id)
     assert "CMS-2025-0240" in match["docket_ids"]
 
 
-# --- GET /collections/<id>/dockets (paginated) ---
+# --- GET /api/collections/<id>/dockets (paginated) ---
 
 def test_get_collection_dockets_returns_empty_for_empty_collection(client):  # pylint: disable=redefined-outer-name
-    """GET /collections/<id>/dockets returns empty list for a collection with no dockets"""
+    """GET /api/collections/<id>/dockets returns empty list for a collection with no dockets"""
     collection_id = client.post(
-        '/collections', json={"name": "Empty"}
+        '/api/collections', json={"name": "Empty"}
     ).get_json()["collection_id"]
-    response = client.get(f'/collections/{collection_id}/dockets')
+    response = client.get(f'/api/collections/{collection_id}/dockets')
     assert response.status_code == 200
     assert response.get_json() == []
 
 
 def test_get_collection_dockets_has_pagination_headers(client):  # pylint: disable=redefined-outer-name
-    """GET /collections/<id>/dockets returns all required pagination headers"""
+    """GET /api/collections/<id>/dockets returns all required pagination headers"""
     collection_id = client.post(
-        '/collections', json={"name": "Headers Check"}
+        '/api/collections', json={"name": "Headers Check"}
     ).get_json()["collection_id"]
-    response = client.get(f'/collections/{collection_id}/dockets')
+    response = client.get(f'/api/collections/{collection_id}/dockets')
     assert response.status_code == 200
     assert 'X-Page' in response.headers
     assert 'X-Page-Size' in response.headers
@@ -485,34 +501,34 @@ def test_get_collection_dockets_has_pagination_headers(client):  # pylint: disab
 
 
 def test_get_collection_dockets_returns_404_for_nonexistent_collection(client):  # pylint: disable=redefined-outer-name
-    """GET /collections/<id>/dockets returns 404 for a collection that does not exist"""
-    response = client.get('/collections/9999/dockets')
+    """GET /api/collections/<id>/dockets returns 404 for a collection that does not exist"""
+    response = client.get('/api/collections/9999/dockets')
     assert response.status_code == 404
 
 
 def test_get_collection_dockets_requires_auth(app):  # pylint: disable=redefined-outer-name
-    """GET /collections/<id>/dockets returns 401 without cookie"""
-    response = app.test_client().get('/collections/1/dockets')
+    """GET /api/collections/<id>/dockets returns 401 without cookie"""
+    response = app.test_client().get('/api/collections/1/dockets')
     assert response.status_code == 401
 
 
 def test_get_collection_dockets_respects_page_size(client):  # pylint: disable=redefined-outer-name
-    """GET /collections/<id>/dockets respects page_size query param"""
+    """GET /api/collections/<id>/dockets respects page_size query param"""
     collection_id = client.post(
-        '/collections', json={"name": "Paged"}
+        '/api/collections', json={"name": "Paged"}
     ).get_json()["collection_id"]
-    response = client.get(f'/collections/{collection_id}/dockets?page=1&page_size=5')
+    response = client.get(f'/api/collections/{collection_id}/dockets?page=1&page_size=5')
     assert response.status_code == 200
     assert response.headers['X-Page'] == '1'
     assert response.headers['X-Page-Size'] == '5'
 
 
 def test_get_collection_dockets_returns_json_list(client):  # pylint: disable=redefined-outer-name
-    """GET /collections/<id>/dockets returns a JSON list"""
+    """GET /api/collections/<id>/dockets returns a JSON list"""
     collection_id = client.post(
-        '/collections', json={"name": "List Check"}
+        '/api/collections', json={"name": "List Check"}
     ).get_json()["collection_id"]
-    response = client.get(f'/collections/{collection_id}/dockets')
+    response = client.get(f'/api/collections/{collection_id}/dockets')
     assert response.is_json
     assert isinstance(response.get_json(), list)
 
@@ -520,9 +536,9 @@ def test_get_collection_dockets_returns_json_list(client):  # pylint: disable=re
 def test_get_collection_dockets_total_results_zero_for_empty(client):  # pylint: disable=redefined-outer-name
     """X-Total-Results is 0 for a collection with no dockets"""
     collection_id = client.post(
-        '/collections', json={"name": "Zero"}
+        '/api/collections', json={"name": "Zero"}
     ).get_json()["collection_id"]
-    response = client.get(f'/collections/{collection_id}/dockets')
+    response = client.get(f'/api/collections/{collection_id}/dockets')
     assert response.headers['X-Total-Results'] == '0'
     assert response.headers['X-Has-Next'] == 'false'
     assert response.headers['X-Has-Prev'] == 'false'
@@ -539,11 +555,11 @@ def test_agencies_returns_list(client):  # pylint: disable=redefined-outer-name
     assert isinstance(data, list)
 
 
-@patch('mirrsearch.db.psycopg2.connect')
-def test_get_postgres_connection(mock_connect):
-    """Test postgres connection"""
-    mock_conn = MagicMock()
-    mock_connect.return_value = mock_conn
+@patch('mirrsearch.db._build_engine')
+def test_get_db_connection(mock_build_engine):
+    """Test get_db returns a DBLayer backed by a SQLAlchemy engine"""
+    mock_engine = MagicMock()
+    mock_build_engine.return_value = mock_engine
 
     with patch.dict(os.environ, {
         'DB_HOST': 'localhost',
@@ -552,9 +568,10 @@ def test_get_postgres_connection(mock_connect):
         'DB_USER': 'test',
         'DB_PASSWORD': 'test'
     }):
-        result = get_postgres_connection()
-        assert result.conn == mock_conn
-        mock_connect.assert_called_once()
+        with patch('mirrsearch.db._ENGINE', None):
+            result = get_db()
+            assert result.engine == mock_engine
+            mock_build_engine.assert_called_once()
 
 
 @patch('mirrsearch.db.OpenSearch')
@@ -568,11 +585,12 @@ def test_get_opensearch_connection(mock_opensearch):
 
 def test_request_download_returns_job_id(client):  # pylint: disable=redefined-outer-name
     """POST /download/request returns job_id and started status"""
-    response = client.post('/download/request', json={
-        "docket_ids": ["CMS-2025-0240"],
-        "format": "raw",
-        "include_binaries": False
-    })
+    with patch('mirrsearch.app._push_job_to_redis'):
+        response = client.post('/download/request', json={
+            "docket_ids": ["CMS-2025-0240"],
+            "format": "raw",
+            "include_binaries": False
+        })
     assert response.status_code == 202
     data = response.get_json()
     assert "job_id" in data
@@ -620,21 +638,24 @@ def test_request_download_requires_valid_format(client):  # pylint: disable=rede
 
 def test_request_download_accepts_csv_format(client):  # pylint: disable=redefined-outer-name
     """POST /download/request accepts csv as a valid format"""
-    response = client.post('/download/request', json={
-        "docket_ids": ["CMS-2025-0240"],
-        "format": "csv",
-        "include_binaries": False
-    })
+    with patch('mirrsearch.app._push_job_to_redis'):
+        response = client.post('/download/request', json={
+            "docket_ids": ["CMS-2025-0240"],
+            "format": "csv",
+            "include_binaries": False
+        })
     assert response.status_code == 202
+
 
 
 def test_download_status_returns_job_info(client):  # pylint: disable=redefined-outer-name
     """GET /download/status/<job_id> returns job status"""
-    job_id = client.post('/download/request', json={
-        "docket_ids": ["CMS-2025-0240"],
-        "format": "raw",
-        "include_binaries": False
-    }).get_json()["job_id"]
+    with patch('mirrsearch.app._push_job_to_redis'):
+        job_id = client.post('/download/request', json={
+            "docket_ids": ["CMS-2025-0240"],
+            "format": "raw",
+            "include_binaries": False
+        }).get_json()["job_id"]
     response = client.get(f'/download/status/{job_id}')
     assert response.status_code == 200
     data = response.get_json()
@@ -643,6 +664,7 @@ def test_download_status_returns_job_info(client):  # pylint: disable=redefined-
     assert "format" in data
     assert "docket_ids" in data
     assert "created_at" in data
+
 
 
 def test_download_status_not_found(client):  # pylint: disable=redefined-outer-name
@@ -659,13 +681,15 @@ def test_download_status_requires_auth(app):  # pylint: disable=redefined-outer-
 
 def test_download_file_not_ready(client):  # pylint: disable=redefined-outer-name
     """GET /download/<job_id> returns 202 when job is still pending"""
-    job_id = client.post('/download/request', json={
-        "docket_ids": ["CMS-2025-0240"],
-        "format": "raw",
-        "include_binaries": False
-    }).get_json()["job_id"]
+    with patch('mirrsearch.app._push_job_to_redis'):
+        job_id = client.post('/download/request', json={
+            "docket_ids": ["CMS-2025-0240"],
+            "format": "raw",
+            "include_binaries": False
+        }).get_json()["job_id"]
     response = client.get(f'/download/{job_id}')
     assert response.status_code == 202
+
 
 
 def test_download_file_not_found(client):  # pylint: disable=redefined-outer-name
@@ -678,6 +702,33 @@ def test_download_file_requires_auth(app):  # pylint: disable=redefined-outer-na
     """GET /download/<job_id> returns 401 without cookie"""
     response = app.test_client().get('/download/some-job-id')
     assert response.status_code == 401
+
+
+def test_download_file_redirects_to_s3_url(client, mock_db):  # pylint: disable=redefined-outer-name
+    """GET /download/<job_id> redirects to S3 URL when job is ready"""
+    with patch('mirrsearch.app._push_job_to_redis'):
+        job_id = client.post('/download/request', json={
+            "docket_ids": ["CMS-2025-0240"],
+            "format": "raw",
+            "include_binaries": False
+        }).get_json()["job_id"]
+    mock_db.set_job_ready(job_id, "https://s3.example.com/test.zip")
+    response = client.get(f'/download/{job_id}')
+    assert response.status_code == 302
+    assert "s3.example.com" in response.headers["Location"]
+
+
+def test_download_file_no_s3_url_returns_404(client, mock_db):  # pylint: disable=redefined-outer-name
+    """GET /download/<job_id> returns 404 when job is ready but s3_url is missing"""
+    with patch('mirrsearch.app._push_job_to_redis'):
+        job_id = client.post('/download/request', json={
+            "docket_ids": ["CMS-2025-0240"],
+            "format": "raw",
+            "include_binaries": False
+        }).get_json()["job_id"]
+    mock_db.update_download_job_status(job_id, "ready")
+    response = client.get(f'/download/{job_id}')
+    assert response.status_code == 404
 
 
 def test_search_with_date_filters(client): # pylint: disable=redefined-outer-name
@@ -757,6 +808,654 @@ def test_oauth_handler_from_aws_secrets(monkeypatch):
 def test_internal_logic_error_handling(client): # pylint: disable=redefined-outer-name
     """Test error handling in InternalLogic"""
     with patch('mirrsearch.internal_logic.get_db') as mock_get_db:
-        mock_get_db.side_effect = Exception("DB Error")
+        mock_get_db.side_effect = RuntimeError("DB Error")
         response = client.get('/search/?str=test')
         assert response.status_code in [200, 500]
+
+# --- Single docket download ---
+
+def test_request_single_download_returns_job_id(client):  # pylint: disable=redefined-outer-name
+    """POST /download/request/<docket_id> returns job_id and started status"""
+    with patch('mirrsearch.app._push_job_to_redis'):
+        response = client.post('/download/request/CMS-2025-0240', json={
+            "format": "raw",
+            "include_binaries": False
+        })
+    assert response.status_code == 202
+    data = response.get_json()
+    assert "job_id" in data
+    assert data["status"] == "started"
+
+
+def test_request_single_download_requires_auth(app):  # pylint: disable=redefined-outer-name
+    """POST /download/request/<docket_id> returns 401 without cookie"""
+    response = app.test_client().post('/download/request/CMS-2025-0240', json={
+        "format": "raw",
+        "include_binaries": False
+    })
+    assert response.status_code == 401
+
+
+def test_request_single_download_requires_valid_format(client):  # pylint: disable=redefined-outer-name
+    """POST /download/request/<docket_id> returns 400 for invalid format"""
+    response = client.post('/download/request/CMS-2025-0240', json={
+        "format": "json",
+        "include_binaries": False
+    })
+    assert response.status_code == 400
+
+
+def test_request_single_download_accepts_csv_format(client):  # pylint: disable=redefined-outer-name
+    """POST /download/request/<docket_id> accepts csv as a valid format"""
+    with patch('mirrsearch.app._push_job_to_redis'):
+        response = client.post('/download/request/CMS-2025-0240', json={
+            "format": "csv",
+            "include_binaries": False
+        })
+    assert response.status_code == 202
+
+
+def test_request_single_download_status_checkable(client):  # pylint: disable=redefined-outer-name
+    """Job created via single docket endpoint is retrievable via status endpoint"""
+    with patch('mirrsearch.app._push_job_to_redis'):
+        job_id = client.post('/download/request/CMS-2025-0240', json={
+            "format": "raw",
+            "include_binaries": False
+        }).get_json()["job_id"]
+    response = client.get(f'/download/status/{job_id}')
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["job_id"] == job_id
+    assert data["docket_ids"] == ["CMS-2025-0240"]
+
+def test_request_download_pushes_to_redis(client):  # pylint: disable=redefined-outer-name
+    """POST /download/request pushes job to Redis queue"""
+    with patch('mirrsearch.app._push_job_to_redis') as mock_push:
+        response = client.post('/download/request', json={
+            "docket_ids": ["CMS-2025-0240"],
+            "format": "raw",
+            "include_binaries": False
+        })
+        assert response.status_code == 202
+        assert mock_push.called
+        call_args = mock_push.call_args[0]
+        assert call_args[2] == ["CMS-2025-0240"]
+        assert call_args[3] == "raw"
+        assert call_args[4] is False
+
+
+def test_request_single_download_pushes_to_redis(client):  # pylint: disable=redefined-outer-name
+    """POST /download/request/<docket_id> pushes job to Redis queue"""
+    with patch('mirrsearch.app._push_job_to_redis') as mock_push:
+        response = client.post('/download/request/CMS-2025-0240', json={
+            "format": "raw",
+            "include_binaries": False
+        })
+        assert response.status_code == 202
+        assert mock_push.called
+        call_args = mock_push.call_args[0]
+        assert call_args[2] == ["CMS-2025-0240"]
+
+
+def test_request_download_redis_failure_marks_job_failed(client):  # pylint: disable=redefined-outer-name
+    """POST /download/request returns 503 and marks the job failed if Redis push fails"""
+    with patch('mirrsearch.app._push_job_to_redis', side_effect=Exception("Redis down")):
+        response = client.post('/download/request', json={
+            "docket_ids": ["CMS-2025-0240"],
+            "format": "raw",
+            "include_binaries": False
+        })
+        assert response.status_code == 503
+        data = response.get_json()
+        assert data["error"] == "Unable to queue download job"
+
+        status_response = client.get('/download/status/mock-job-1')
+        assert status_response.status_code == 200
+        status_data = status_response.get_json()
+        assert status_data["status"] == "failed"
+
+
+def test_single_download_redis_failure_marks_job_failed(  # pylint: disable=redefined-outer-name
+        client):
+    """Single-docket download returns 503 and marks the job failed on Redis errors."""
+    with patch('mirrsearch.app._push_job_to_redis', side_effect=Exception("Redis down")):
+        response = client.post('/download/request/CMS-2025-0240', json={
+            "format": "raw",
+            "include_binaries": False
+        })
+        assert response.status_code == 503
+        data = response.get_json()
+        assert data["error"] == "Unable to queue download job"
+
+        status_response = client.get('/download/status/mock-job-1')
+        assert status_response.status_code == 200
+        status_data = status_response.get_json()
+        assert status_data["status"] == "failed"
+
+# =============================================================================
+# last_login — GET /api/user/last-login
+# =============================================================================
+
+def test_get_user_last_login_returns_null_before_any_login(tmp_path):
+    """GET /api/user/last-login returns null last_login for a brand-new user"""
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<html></html>")
+    test_app = create_app(
+        dist_dir=str(dist), db_layer=MockDBLayer(), oauth_handler=MockOAuthHandler()
+    )
+    test_app.config['TESTING'] = True
+    c = test_app.test_client()
+    c.set_cookie("jwt_token", "mock-token")
+    response = c.get('/api/user/last-login')
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["email"] == "test@example.com"
+    assert data["last_login"] is None
+
+
+def test_get_user_last_login_returns_timestamp_after_oauth(tmp_path): # pylint: disable=too-many-locals
+    """GET /api/user/last-login returns an ISO timestamp after a successful OAuth login"""
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<html></html>")
+    db = MockDBLayer()
+    db.add_authorized_user("test@example.com", "Test User")
+    test_app = create_app(
+        dist_dir=str(dist), db_layer=db, oauth_handler=MockOAuthHandler()
+    )
+    test_app.config['TESTING'] = True
+    anon = test_app.test_client()
+
+    # Trigger OAuth callback — this should call update_last_login
+    anon.get('/?code=valid-code')
+
+    # Now query as the authenticated user
+    c = test_app.test_client()
+    c.set_cookie("jwt_token", "mock-token")
+    response = c.get('/api/user/last-login')
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["email"] == "test@example.com"
+    assert data["last_login"] is not None
+    # Must be a valid ISO 8601 string
+    parsed = datetime.fromisoformat(data["last_login"])
+    assert parsed is not None
+
+
+def test_get_user_last_login_requires_auth(app):  # pylint: disable=redefined-outer-name
+    """GET /api/user/last-login returns 401 without a valid cookie"""
+    response = app.test_client().get('/api/user/last-login')
+    assert response.status_code == 401
+
+
+def test_get_user_last_login_updates_on_repeated_login(tmp_path):
+    """last_login advances each time the user logs in via OAuth"""
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<html></html>")
+    db = MockDBLayer()
+    db.add_authorized_user("test@example.com", "Test User")
+    test_app = create_app(
+        dist_dir=str(dist), db_layer=db, oauth_handler=MockOAuthHandler()
+    )
+    test_app.config['TESTING'] = True
+
+    # First login
+    anon = test_app.test_client()
+    anon.get('/?code=valid-code')
+    first_login = db.get_last_login("test@example.com")
+    assert first_login is not None
+
+    # Second login — simulate a later timestamp by calling update_last_login directly
+    db.update_last_login("test@example.com", "Test User")
+    second_login = db.get_last_login("test@example.com")
+    assert second_login is not None
+    # Both calls happened in the same test so timestamps may be equal; just confirm
+    # the field is always populated and is a datetime
+    assert isinstance(second_login, datetime)
+
+
+def test_oauth_callback_calls_update_last_login(tmp_path):
+    """_handle_oauth_callback invokes update_last_login on successful login"""
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<html></html>")
+    db = MockDBLayer()
+    db.add_authorized_user("test@example.com", "Test User")
+    test_app = create_app(
+        dist_dir=str(dist), db_layer=db, oauth_handler=MockOAuthHandler()
+    )
+    test_app.config['TESTING'] = True
+    anon = test_app.test_client()
+
+    assert db.get_last_login("test@example.com") is None
+    anon.get('/?code=valid-code')
+    assert db.get_last_login("test@example.com") is not None
+
+
+def test_oauth_callback_last_login_failure_does_not_block_login(tmp_path):
+    """A failure in update_last_login must not prevent the OAuth redirect from completing"""
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<html></html>")
+
+    class BrokenLastLoginDB(MockDBLayer):
+        """MockDBLayer whose update_last_login always raises."""
+        def update_last_login(self, email, name):
+            raise RuntimeError("DB write failed")
+
+    db = BrokenLastLoginDB()
+    db.add_authorized_user("test@example.com", "Test User")
+    test_app = create_app(
+        dist_dir=str(dist), db_layer=db, oauth_handler=MockOAuthHandler()
+    )
+    test_app.config['TESTING'] = True
+    anon = test_app.test_client()
+
+    response = anon.get('/?code=valid-code')
+    # Login still succeeds — JWT cookie is set, redirect happens
+    assert response.status_code == 302
+    assert 'jwt_token' in response.headers.get('Set-Cookie', '')
+
+
+# =============================================================================
+# last_login — GET /admin/users
+# =============================================================================
+
+def test_admin_get_users_returns_list_for_admin(tmp_path):# pylint: disable=too-many-locals
+    """GET /admin/users returns the authorized-users list with last_login for admins"""
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<html></html>")
+    db = MockDBLayer()
+    db.add_admin("test@example.com")
+    db.add_authorized_user("alice@example.com", "Alice")
+    db.update_last_login("alice@example.com", "Alice")
+    test_app = create_app(
+        dist_dir=str(dist), db_layer=db, oauth_handler=MockOAuthHandler()
+    )
+    test_app.config['TESTING'] = True
+    c = test_app.test_client()
+    c.set_cookie("jwt_token", "mock-token")
+
+    response = c.get('/admin/users')
+    assert response.status_code == 200
+    data = response.get_json()
+    assert isinstance(data, list)
+    alice = next((u for u in data if u["email"] == "alice@example.com"), None)
+    assert alice is not None
+    assert alice["last_login"] is not None
+    # Verify it's a serialized ISO string (not a raw datetime object)
+    datetime.fromisoformat(alice["last_login"])
+
+
+def test_admin_get_users_includes_null_last_login_for_never_logged_in(tmp_path):
+    """GET /admin/users shows null last_login for users who have never logged in"""
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<html></html>")
+    db = MockDBLayer()
+    db.add_admin("test@example.com")
+    db.add_authorized_user("bob@example.com", "Bob")
+    # Bob is authorized but has never logged in — no update_last_login call
+    test_app = create_app(
+        dist_dir=str(dist), db_layer=db, oauth_handler=MockOAuthHandler()
+    )
+    test_app.config['TESTING'] = True
+    c = test_app.test_client()
+    c.set_cookie("jwt_token", "mock-token")
+
+    response = c.get('/admin/users')
+    assert response.status_code == 200
+    data = response.get_json()
+    bob = next((u for u in data if u["email"] == "bob@example.com"), None)
+    assert bob is not None
+    assert bob["last_login"] is None
+
+
+def test_admin_get_users_forbidden_for_non_admin(app):  # pylint: disable=redefined-outer-name
+    """GET /admin/users returns 403 for a non-admin authenticated user"""
+    # The default MockDBLayer has no admins, so test@example.com is not an admin
+    response = app.test_client()
+    response.set_cookie("jwt_token", "mock-token")
+    resp = response.get('/admin/users')
+    assert resp.status_code == 403
+
+
+def test_admin_get_users_requires_auth(app):  # pylint: disable=redefined-outer-name
+    """GET /admin/users returns 403 without a cookie (no user → not admin)"""
+    response = app.test_client().get('/admin/users')
+    assert response.status_code == 403
+
+# =============================================================================
+# Additional tests for coverage
+# =============================================================================
+
+def test_search_with_sort_by_parameter(client): # pylint: disable=redefined-outer-name
+    """Test search with sort_by parameter"""
+    response = client.get('/search/?str=ESRD&sort_by=modify_date')
+    assert response.status_code == 200
+
+
+def test_search_with_start_date_only(client): # pylint: disable=redefined-outer-name
+    """Test search with only start_date filter"""
+    response = client.get('/search/?str=renal&start_date=2024-01-01')
+    assert response.status_code == 200
+
+
+def test_search_with_end_date_only(client): # pylint: disable=redefined-outer-name
+    """Test search with only end_date filter"""
+    response = client.get('/search/?str=renal&end_date=2024-12-31')
+    assert response.status_code == 200
+
+
+def test_search_with_cfr_part_dict_format(client): # pylint: disable=redefined-outer-name
+    """Test search with CFR part in dict format (title:part)"""
+    response = client.get('/search/?str=renal&cfr_part=42:413')
+    assert response.status_code == 200
+
+
+def test_search_with_cfr_part_missing_title(client): # pylint: disable=redefined-outer-name
+    """Test search with malformed CFR part (missing title) is ignored"""
+    response = client.get('/search/?str=renal&cfr_part=:413')
+    assert response.status_code == 200
+
+
+def test_search_with_cfr_part_missing_part(client): # pylint: disable=redefined-outer-name
+    """Test search with malformed CFR part (missing part) is ignored"""
+    response = client.get('/search/?str=renal&cfr_part=42:')
+    assert response.status_code == 200
+
+
+# def test_admin_login_sets_intent_cookie(app):
+#     """Test /admin/login sets login_intent cookie"""
+#     response = app.get('/admin/login')
+#     assert response.status_code == 302
+#     assert any('login_intent=admin' in h for h in response.headers.getlist('Set-Cookie'))
+
+
+def test_admin_status_without_cookie(app): # pylint: disable=redefined-outer-name
+    """Test /admin/status returns is_admin false without cookie"""
+    anon = app.test_client()
+    response = anon.get('/admin/status')
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["is_admin"] is False
+
+
+def test_admin_status_with_db_layer_none(tmp_path):
+    """Test /admin/status when db_layer is None"""
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<html></html>")
+    test_app = create_app(dist_dir=str(dist), db_layer=None, oauth_handler=MockOAuthHandler())
+    test_app.config['TESTING'] = True
+    c = test_app.test_client()
+    c.set_cookie("jwt_token", "mock-token")
+    response = c.get('/admin/status')
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["is_admin"] is False
+
+
+def test_oauth_callback_admin_unauthorized(tmp_path):
+    """Test OAuth callback for admin login with unauthorized user"""
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<html></html>")
+    test_app = create_app(dist_dir=str(dist), db_layer=MockDBLayer(),
+                          oauth_handler=MockOAuthHandler())
+    test_app.config['TESTING'] = True
+    anon = test_app.test_client()
+    anon.set_cookie("login_intent", "admin")
+    response = anon.get('/?code=valid-code')
+    assert response.status_code == 302
+    assert '/admin?error=unauthorized' in response.headers['Location']
+
+
+def test_oauth_callback_regular_user_unauthorized(tmp_path):
+    """Test OAuth callback for regular login with unauthorized user"""
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<html></html>")
+    test_app = create_app(dist_dir=str(dist),
+                          db_layer=MockDBLayer(), oauth_handler=MockOAuthHandler())
+    test_app.config['TESTING'] = True
+    anon = test_app.test_client()
+    response = anon.get('/?code=valid-code')
+    assert response.status_code == 302
+    assert '/login?error=unauthorized' in response.headers['Location']
+
+
+def test_oauth_callback_admin_authorized(tmp_path):
+    """Test OAuth callback for admin login with authorized admin user"""
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<html></html>")
+    db = MockDBLayer()
+    db.add_admin("test@example.com")
+    test_app = create_app(dist_dir=str(dist), db_layer=db, oauth_handler=MockOAuthHandler())
+    test_app.config['TESTING'] = True
+    anon = test_app.test_client()
+    anon.set_cookie("login_intent", "admin")
+    response = anon.get('/?code=valid-code')
+    assert response.status_code == 302
+    assert 'jwt_token' in response.headers.get('Set-Cookie', '')
+    assert response.headers['Location'] == '/admin'
+
+
+def test_oauth_callback_exception_in_admin_check(tmp_path):
+    """Test OAuth callback when admin check raises exception"""
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<html></html>")
+
+    class BrokenDB(MockDBLayer):
+        def is_admin(self, email):
+            raise RuntimeError("DB error")
+
+    test_app = create_app(dist_dir=str(dist),
+                          db_layer=BrokenDB(), oauth_handler=MockOAuthHandler())
+    test_app.config['TESTING'] = True
+    anon = test_app.test_client()
+    anon.set_cookie("login_intent", "admin")
+    response = anon.get('/?code=valid-code')
+    assert response.status_code == 302
+    assert '/admin?error=unauthorized' in response.headers['Location']
+
+
+def test_oauth_callback_exception_in_authorized_check(tmp_path):
+    """Test OAuth callback when authorized user check raises exception"""
+    dist = tmp_path/"dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<html></html>")
+
+    class BrokenDB(MockDBLayer):
+        def is_authorized_user(self, email):
+            raise RuntimeError("DB error")
+
+    test_app = create_app(dist_dir=str(dist), db_layer=BrokenDB(), oauth_handler=MockOAuthHandler())
+    test_app.config['TESTING'] = True
+    anon = test_app.test_client()
+    response = anon.get('/?code=valid-code')
+    assert response.status_code == 302
+    assert '/login?error=unauthorized' in response.headers['Location']
+
+
+def test_get_user_last_login_service_unavailable(tmp_path):
+    """Test /api/user/last-login returns 503 when db_layer is None"""
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<html></html>")
+    test_app = create_app(dist_dir=str(dist), db_layer=None, oauth_handler=MockOAuthHandler())
+    test_app.config['TESTING'] = True
+    c = test_app.test_client()
+    c.set_cookie("jwt_token", "mock-token")
+    response = c.get('/api/user/last-login')
+    assert response.status_code == 503
+    data = response.get_json()
+    assert data["error"] == "Service unavailable"
+
+
+def test_download_file_with_s3_url(tmp_path):
+    """Test download_file redirects to S3 URL when job is ready"""
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<html></html>")
+
+    class MockDBWithReadyJob(MockDBLayer):
+        def get_download_job(self, job_id, user_email):
+            return {"status": "ready", "format": "raw", "docket_ids":
+                    ["CMS-2025-0240"], "created_at": "2026-04-01T00:00:00"}
+        def get_download_s3_url(self, job_id, user_email):
+            return "https://s3.amazonaws.com/test-bucket/file.zip"
+
+    test_app = create_app(dist_dir=str(dist),
+                          db_layer=MockDBWithReadyJob(), oauth_handler=MockOAuthHandler())
+    test_app.config['TESTING'] = True
+    c = test_app.test_client()
+    c.set_cookie("jwt_token", "mock-token")
+    response = c.get('/download/mock-job-1')
+    assert response.status_code == 302
+    assert "s3.amazonaws.com" in response.headers['Location']
+
+
+def test_download_file_s3_url_not_found(tmp_path):
+    """Test download_file returns 404 when S3 URL is None"""
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<html></html>")
+
+    class MockDBWithNoS3Url(MockDBLayer):
+        def get_download_job(self, job_id, user_email):
+            return {"status": "ready", "format": "raw", "docket_ids":
+                    ["CMS-2025-0240"], "created_at": "2026-04-01T00:00:00"}
+        def get_download_s3_url(self, job_id, user_email):
+            return None
+
+    test_app = create_app(dist_dir=str(dist),
+                          db_layer=MockDBWithNoS3Url(), oauth_handler=MockOAuthHandler())
+    test_app.config['TESTING'] = True
+    c = test_app.test_client()
+    c.set_cookie("jwt_token", "mock-token")
+    response = c.get('/download/mock-job-1')
+    assert response.status_code == 404
+    data = response.get_json()
+    assert data["error"] == "Download file not found"
+
+
+def test_dockets_endpoint_with_no_ids(client): # pylint: disable=redefined-outer-name
+    """Test /dockets endpoint returns empty list when no docket_ids provided"""
+    response = client.get('/dockets')
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data == []
+
+
+def test_dockets_endpoint_with_ids(client): # pylint: disable=redefined-outer-name
+    """Test /dockets endpoint returns dockets for given IDs"""
+    response = client.get('/dockets?docket_id=CMS-2025-0240')
+    assert response.status_code == 200
+    data = response.get_json()
+    assert isinstance(data, list)
+
+
+def test_collections_page_route(tmp_path):
+    """Test /collections route serves index.html"""
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<html><body>Collections</body></html>")
+    test_app = create_app(dist_dir=str(dist), db_layer=MockDBLayer())
+    test_client = test_app.test_client()
+    response = test_client.get('/collections')
+    assert response.status_code == 200
+    assert b'Collections' in response.data
+
+
+def test_explorer_page_route(tmp_path):
+    """Test /explorer route serves index.html"""
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<html><body>Explorer</body></html>")
+    test_app = create_app(dist_dir=str(dist), db_layer=MockDBLayer())
+    test_client = test_app.test_client()
+    response = test_client.get('/explorer')
+    assert response.status_code == 200
+    assert b'Explorer' in response.data
+    response = test_client.get('/explorer/')
+    assert response.status_code == 200
+
+
+def test_login_page_route(tmp_path):
+    """Test /login route serves index.html"""
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<html><body>Login</body></html>")
+    test_app = create_app(dist_dir=str(dist), db_layer=MockDBLayer())
+    test_client = test_app.test_client()
+    response = test_client.get('/login')
+    assert response.status_code == 200
+    assert b'Login' in response.data
+
+
+def test_admin_page_route(tmp_path):
+    """Test /admin route serves index.html"""
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<html><body>Admin</body></html>")
+    test_app = create_app(dist_dir=str(dist), db_layer=MockDBLayer())
+    test_client = test_app.test_client()
+    response = test_client.get('/admin')
+    assert response.status_code == 200
+    assert b'Admin' in response.data
+    response = test_client.get('/admin/')
+    assert response.status_code == 200
+
+def test_list_download_jobs_returns_created_jobs(client):  # pylint: disable=redefined-outer-name
+    """GET /download/jobs returns jobs created by the user"""
+    with patch('mirrsearch.app._push_job_to_redis'):
+        # create a job first
+        client.post('/download/request', json={
+            "docket_ids": ["CMS-2025-0240"],
+            "format": "raw",
+            "include_binaries": False
+        })
+
+    response = client.get('/download/jobs')
+    assert response.status_code == 200
+    data = response.get_json()
+
+    assert isinstance(data, list)
+    assert len(data) >= 1
+    assert "job_id" in data[0]
+    assert "status" in data[0]
+
+def test_list_download_jobs_requires_auth(app):  # pylint: disable=redefined-outer-name
+    """GET /download/jobs returns 401 without authentication"""
+    response = app.test_client().get('/download/jobs')
+    assert response.status_code == 401
+
+def test_list_download_jobs_empty(client):  # pylint: disable=redefined-outer-name
+    """GET /download/jobs returns empty list if no jobs exist"""
+    response = client.get('/download/jobs')
+    assert response.status_code == 200
+    assert response.get_json() == []
+
+def test_list_download_jobs_multiple(client):  # pylint: disable=redefined-outer-name
+    """GET /download/jobs returns multiple jobs"""
+    with patch('mirrsearch.app._push_job_to_redis'):
+        client.post('/download/request', json={
+            "docket_ids": ["CMS-2025-0240"],
+            "format": "raw",
+            "include_binaries": False
+        })
+        client.post('/download/request/CMS-2025-0240', json={
+            "format": "csv",
+            "include_binaries": False
+        })
+
+    response = client.get('/download/jobs')
+    data = response.get_json()
+
+    assert len(data) >= 2

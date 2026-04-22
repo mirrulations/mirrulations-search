@@ -1,6 +1,6 @@
 """
 Ingest real production-like data into local OpenSearch matching the actual structure.
-Uses separate indices for documents, comments, and comments_extracted_text.
+Uses separate indices for documents_text, comments, and comments_extracted_text.
 """
 
 import sys
@@ -28,7 +28,7 @@ from mirrsearch.db import get_opensearch_connection  # pylint: disable=wrong-imp
 
 
 def ingest_opensearch():
-    """Insert production-like documents, comments, and extracted text into local OpenSearch."""
+    """Insert production-like documents_text, comments, and extracted text into local OpenSearch."""
     try:
         client = get_opensearch_connection()
         # Force a request early so we can exit gracefully if OpenSearch is down.
@@ -44,11 +44,11 @@ def ingest_opensearch():
         return
 
     # Delete existing indexes for a clean ingest.
-    for index in ["documents", "comments", "comments_extracted_text"]:
+    for index in ["documents_text", "comments", "comments_extracted_text"]:
         if client.indices.exists(index=index):
             client.indices.delete(index=index)
     client.indices.create(
-        index="documents",
+        index="documents_text",
         body={
             "mappings": {
                 "properties": {
@@ -272,7 +272,7 @@ def ingest_opensearch():
     # fmt: on
 
     for i, doc in enumerate(documents_text):
-        client.index(index="documents", id=i, body=doc)
+        client.index(index="documents_text", id=i, body=doc)
 
     # Insert comments
     # fmt: off
@@ -471,7 +471,7 @@ def ingest_opensearch():
         client.index(index="comments_extracted_text", id=i, body=extracted)
 
     # Refresh indices
-    client.indices.refresh(index="documents")
+    client.indices.refresh(index="documents_text")
     client.indices.refresh(index="comments")
     client.indices.refresh(index="comments_extracted_text")
 

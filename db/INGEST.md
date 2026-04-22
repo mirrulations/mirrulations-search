@@ -14,11 +14,19 @@ For **Federal Register–only** ingest (without the full flow here), see `INGEST
    pip install -r requirements.txt
    ```
 
-2. **mirrulations-fetch** — Must be on `PATH` when fetch is not skipped:
+2. **mirrulations-fetch** — Must be on `PATH` when fetch is not skipped. With your virtual environment activated, from the directory where you want the clone (often the repo root alongside `mirrulations-search`):
 
    ```bash
-   pip install -e /path/to/mirrulations-fetch
+   git clone https://github.com/mirrulations/mirrulations-fetch.git
+   pip install -e ./mirrulations-fetch
    ```
+
+- If you don't have mirrulations fecth installed run:
+
+  ```bash
+   git clone https://github.com/mirrulations/mirrulations-fetch.git 
+   ```
+
 
 3. **PostgreSQL** — Postgres must be running and you must have created the app database (for example `mirrulations`). That is often done via `./db/setup_postgres.sh` or `createdb mirrulations`, plus `psql … -f db/schema-postgres.sql` if the tables are not loaded yet.
 
@@ -29,9 +37,20 @@ For **Federal Register–only** ingest (without the full flow here), see `INGEST
    # or, e.g.: psql -h localhost -U "$(whoami)" -d mirrulations -f db/schema-postgres.sql
    ```
 
-   Tables used by this script include `dockets`, `documentsWithFRdoc`, `comments`, and (unless `--skip-federal-register`) `federal_register_documents` and `cfrparts`.
+   Tables used by this script include `dockets`, `documents`, `comments`, and (unless `--skip-federal-register`) `federal_register_documents` and `cfrparts`.
 
    If you see `FATAL: role "postgres" does not exist`, that usually comes from using the default `--user postgres` in `ingest.py` or from tools that assume that role. Fix it by passing `--user "$(whoami)"` (typical on macOS/Homebrew Postgres), or create the role once with `createuser -s postgres` if you need a `postgres` login. You only need the latter if something in your workflow still expects the `postgres` user.
+
+   **Schema drift (missing columns).** Ingest maps document fields to whatever columns the current code expects (see `db/fed_reg_gov_data/load_documents.py` and `db/schema-postgres.sql`). If your `mirrulations` database was created from an older schema, you may see errors such as `column "attachments_self_link" of relation "documentswithfrdoc" does not exist`. Re-running `psql … -f db/schema-postgres.sql` alone usually **does not** fix that: `CREATE TABLE IF NOT EXISTS` does not add new columns to tables that already exist.
+
+   - **Recreate an empty database (simplest for local dev).** From the repo root, run `./db/create_empty_db.sh`. It drops the default database `mirrulations` (you are prompted to confirm if it already exists; set `OVERWRITE_YES=1` to skip the prompt), recreates it, and loads `schema-postgres.sql`, so all tables match the repo. **This deletes all data** in that database. Then run ingest as usual, for example:
+
+     ```bash
+     ./db/create_empty_db.sh
+     python3 db/ingest.py FAA-2025-0618 --user "$(whoami)"
+     ```
+
+   - **Keep existing data.** Instead of dropping the database, bring the live schema in line with `db/schema-postgres.sql` using migrations (for example `ALTER TABLE documentsWithFRdoc ADD COLUMN …`) for any new columns your database is missing.
 
 4. **OpenSearch** (optional for DB-only runs) — After Postgres ingest, the script connects via `mirrsearch.db.get_opensearch_connection()` and indexes HTM/HTML and comments. Connection defaults to `localhost:9200`; override with env vars such as `OPENSEARCH_HOST`, `OPENSEARCH_PORT`, and (if your cluster uses auth) `OPENSEARCH_USER` / `OPENSEARCH_PASSWORD`. If OpenSearch is unavailable, those steps log a warning and do not fail the run.
 
@@ -54,6 +73,7 @@ python3 db/ingest.py FAA-2025-0618 --user "$(whoami)"
 | `--skip-comments-ingest` | Skip loading comments into Postgres and skip indexing `raw-data/comments/*.json` into OpenSearch. |
 | `--skip-federal-register` | Skip FR API fetch and `federal_register_documents` / `cfrparts` upserts. |
 | `--dry-run` | Validate and log what would be written; no Postgres writes. OpenSearch indexing still runs afterward (same as a normal run), unless the client fails. |
+| `-v` / `--verbose` | Enable verbose logging and show progress bars/spinners for data processing operations (document indexing, comment ingestion, file reading). |
 
 ### PostgreSQL connection
 

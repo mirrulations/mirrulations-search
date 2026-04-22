@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Load docket metadata, regulatory documents, and public comments from mirrulations S3 JSON into
-PostgreSQL (tables ``dockets``, ``documentsWithFRdoc``, and ``comments``).
+PostgreSQL (tables ``dockets``, ``documents``, and ``comments``).
 
 By default, S3 download includes ``docket/``, ``documents/``, ``comments/``, and derived data (when
 present). Use ``--skip-comments-download`` to fetch only docket + documents. Use
@@ -351,7 +351,7 @@ def _upsert_sql(table: str, columns: list[str], pk: str) -> str:
 
 
 DOCKET_UPSERT_SQL = _upsert_sql("dockets", DOCKET_COLS, "docket_id")
-DOCUMENT_UPSERT_SQL = _upsert_sql("documentsWithFRdoc", DOC_COLS, "document_id")
+DOCUMENT_UPSERT_SQL = _upsert_sql("documents", DOC_COLS, "document_id")
 COMMENT_UPSERT_SQL = _upsert_sql("comments", COMMENT_COLS, "comment_id")
 
 
@@ -464,7 +464,7 @@ def _row_tuple(record: dict, columns: list[str]) -> tuple:
     return tuple(record[c] for c in columns)
 
 
-_REQUIRED_PUBLIC_TABLES = frozenset({"dockets", "documentswithfrdoc", "comments"})
+_REQUIRED_PUBLIC_TABLES = frozenset({"dockets", "documents", "comments"})
 
 
 def _require_ingest_schema(conn, args: argparse.Namespace) -> None:
@@ -481,7 +481,7 @@ def _require_ingest_schema(conn, args: argparse.Namespace) -> None:
     if missing:
         log.error(
             "Database %r is missing required table(s): %s.\n"
-            "From the project root, load the schema (creates documentsWithFRdoc, etc.):\n"
+            "From the project root, load the schema (creates documents, etc.):\n"
             "  psql -h %s -p %s -U %s -d %s -f db/schema-postgres.sql",
             args.dbname,
             ", ".join(missing),
@@ -496,7 +496,7 @@ def _require_ingest_schema(conn, args: argparse.Namespace) -> None:
 def _ensure_comments_document_fk(conn) -> None:
     """
     Legacy DBs may have ``comments.document_id`` referencing ``documents`` while ingest writes to
-    ``documentsWithFRdoc``. Drop the wrong FK and attach to ``documentsWithFRdoc`` (matches
+    ``documents``. Drop the wrong FK and attach to ``documents`` (matches
     ``schema-postgres.sql``). Idempotent.
     """
     with conn.cursor() as cur:
@@ -517,7 +517,7 @@ def _ensure_comments_document_fk(conn) -> None:
         compact = defn.lower().replace(" ", "")
         if "foreignkey(document_id)" not in compact:
             continue
-        if "documentswithfrdoc" in defn.lower():
+        if "documents" in defn.lower():
             has_fr = True
             continue
         drop_names.append(conname)
@@ -538,11 +538,11 @@ def _ensure_comments_document_fk(conn) -> None:
                     """
                     ALTER TABLE comments
                     ADD CONSTRAINT comments_document_id_fkey
-                    FOREIGN KEY (document_id) REFERENCES documentsWithFRdoc (document_id)
+                    FOREIGN KEY (document_id) REFERENCES documents (document_id)
                     """
                 )
                 log.info(
-                    "Added FK comments.document_id → documentsWithFRdoc.document_id."
+                    "Added FK comments.document_id → documents.document_id."
                 )
             except psycopg2.errors.DuplicateObject:
                 pass
@@ -551,7 +551,7 @@ def _ensure_comments_document_fk(conn) -> None:
 
 def _fk_id_sets(conn) -> tuple[set[str], set[str]]:
     with conn.cursor() as cur:
-        cur.execute("SELECT document_id FROM documentsWithFRdoc;")
+        cur.execute("SELECT document_id FROM documents;")
         docs = {r[0] for r in cur.fetchall()}
         cur.execute("SELECT docket_id FROM dockets;")
         dockets = {r[0] for r in cur.fetchall()}
@@ -564,6 +564,7 @@ def _batch_write(
     batch: list[tuple],
     dry_run: bool,
     label: str,
+    log_each: bool = True,
 ) -> int:
     if not batch:
         return 0
@@ -573,7 +574,8 @@ def _batch_write(
     with conn.cursor() as cur:
         execute_values(cur, sql, batch)
     conn.commit()
-    log.info("Upserted %d %s row(s).", len(batch), label)
+    if log_each:
+        log.info("Upserted %d %s row(s).", len(batch), label)
     return len(batch)
 
 
@@ -595,6 +597,7 @@ def ingest_docket_and_documents(
     docket_dir: Path,
     conn,
     dry_run: bool = False,
+    verbose: bool = False,
 ) -> tuple[bool, int, int, str | None]:
     docket_paths = _paths(docket_dir, "docket")
     doc_paths = _paths(docket_dir, "documents")
@@ -623,7 +626,8 @@ def ingest_docket_and_documents(
         with conn.cursor() as cur:
             execute_values(cur, DOCKET_UPSERT_SQL, [tup])
         conn.commit()
-        log.info("Upserted docket %s", docket_row["docket_id"])
+        if verbose:
+            log.info("Upserted docket %s", docket_row["docket_id"])
 
     batch: list[tuple] = []
     skipped = 0
@@ -641,10 +645,13 @@ def ingest_docket_and_documents(
             continue
         batch.append(_row_tuple(doc, DOC_COLS))
         if len(batch) >= BATCH_SIZE:
-            upserted += _batch_write(conn, DOCUMENT_UPSERT_SQL, batch, dry_run, "document")
+            upserted += _batch_write(conn, DOCUMENT_UPSERT_SQL, batch, dry_run, "document", log_each=False)
             batch.clear()
 
-    upserted += _batch_write(conn, DOCUMENT_UPSERT_SQL, batch, dry_run, "document")
+    upserted += _batch_write(conn, DOCUMENT_UPSERT_SQL, batch, dry_run, "document", log_each=False)
+
+    if verbose and upserted:
+        log.info("Upserted %d document(s).", upserted)
 
     return True, upserted, skipped, docket_row["docket_id"]
 
@@ -656,7 +663,7 @@ def _fetch_db_summary(conn, docket_id: str) -> tuple[str | None, int, int, list[
         row = cur.fetchone()
         title = row[0] if row else None
         cur.execute(
-            "SELECT COUNT(*) FROM documentsWithFRdoc WHERE docket_id = %s",
+            "SELECT COUNT(*) FROM documents WHERE docket_id = %s",
             (docket_id,),
         )
         n_docs = cur.fetchone()[0]
@@ -664,7 +671,7 @@ def _fetch_db_summary(conn, docket_id: str) -> tuple[str | None, int, int, list[
         n_comments = cur.fetchone()[0]
         cur.execute(
             """
-            SELECT document_title FROM documentsWithFRdoc
+            SELECT document_title FROM documents
             WHERE docket_id = %s AND document_title IS NOT NULL AND TRIM(document_title) <> ''
             ORDER BY document_id
             LIMIT 5
@@ -689,10 +696,10 @@ def _ingest_summary(
     *,
     dry_run: bool,
     skip_comments_ingest: bool,
+    verbose: bool = False,
 ) -> None:
     if not docket_id:
         return
-    log.info("--- Summary ---")
     if dry_run:
         title = None
         for path in _paths(docket_dir, "docket"):
@@ -716,16 +723,17 @@ def _ingest_summary(
         return
 
     assert conn is not None
-    title, n_docs, n_comments, doc_titles = _fetch_db_summary(conn, docket_id)
-    log.info("Docket: %s", docket_id)
-    log.info("Title: %s", title or "—")
-    log.info("In database: %d document(s), %d comment(s) for this docket_id", n_docs, n_comments)
-    if doc_titles:
-        log.info("Sample document titles:")
-        for i, t in enumerate(doc_titles, 1):
-            log.info("  %d. %s", i, t)
-    if skip_comments_ingest:
-        log.info("Comments were not ingested (--skip-comments-ingest).")
+    if verbose:
+        title, n_docs, n_comments, doc_titles = _fetch_db_summary(conn, docket_id)
+        log.info("Docket: %s", docket_id)
+        log.info("Title: %s", title or "—")
+        log.info("In database: %d document(s), %d comment(s) for this docket_id", n_docs, n_comments)
+        if doc_titles:
+            log.info("Sample document titles:")
+            for i, t in enumerate(doc_titles, 1):
+                log.info("  %d. %s", i, t)
+        if skip_comments_ingest:
+            log.info("Comments were not ingested (--skip-comments-ingest).")
 
 
 _COMMENT_REQUIRED = (
@@ -741,6 +749,7 @@ def ingest_comments(
     docket_dir: Path,
     conn,
     dry_run: bool = False,
+    verbose: bool = False,
 ) -> tuple[int, int]:
     files = _paths(docket_dir, "comments")
     if not files:
@@ -749,22 +758,24 @@ def ingest_comments(
             docket_dir,
         )
         return 0, 0
-
-    log.info("Found %d comment JSON file(s).", len(files))
+    if verbose:
+        log.info("Found %d comment JSON file(s).", len(files))
     valid_doc_ids: set[str] = set()
     valid_docket_ids: set[str] = set()
     if not dry_run and conn is not None:
         valid_doc_ids, valid_docket_ids = _fk_id_sets(conn)
-        log.info(
-            "FK check: %d document_id(s), %d docket_id(s) in DB.",
-            len(valid_doc_ids),
-            len(valid_docket_ids),
-        )
+        if verbose:
+            log.info(
+                "FK check: %d document_id(s), %d docket_id(s) in DB.",
+                len(valid_doc_ids),
+                len(valid_docket_ids),
+            )
 
     batch: list[tuple] = []
     skipped = 0
     nulled_doc = 0
     nulled_docket = 0
+    upserted = 0
 
     for path in files:
         payload = load_raw_json(path)
@@ -786,7 +797,7 @@ def ingest_comments(
         doc_id = record.get("document_id")
         if doc_id and not dry_run and doc_id not in valid_doc_ids:
             log.warning(
-                "%s: document_id %r not in documentsWithFRdoc — setting NULL.",
+                "%s: document_id %r not in documents — setting NULL.",
                 path.name,
                 doc_id,
             )
@@ -801,14 +812,14 @@ def ingest_comments(
 
         batch.append(_row_tuple(record, COMMENT_COLS))
         if len(batch) >= BATCH_SIZE:
-            _batch_write(conn, COMMENT_UPSERT_SQL, batch, dry_run, "comment")
+            upserted += _batch_write(conn, COMMENT_UPSERT_SQL, batch, dry_run, "comment", log_each=False)
             batch.clear()
 
-    _batch_write(conn, COMMENT_UPSERT_SQL, batch, dry_run, "comment")
+    upserted += _batch_write(conn, COMMENT_UPSERT_SQL, batch, dry_run, "comment", log_each=False)
 
     if nulled_doc:
         log.info(
-            "%d comment(s) had document_id set to NULL (missing documentsWithFRdoc row).",
+            "%d comment(s) had document_id set to NULL (missing documents row).",
             nulled_doc,
         )
     if nulled_docket:
@@ -932,6 +943,11 @@ def parse_args():
         default=os.getenv("DB_PASSWORD", os.getenv("PGPASSWORD", "")),
     )
     p.add_argument("--dry-run", action="store_true", help="Parse JSON only; no database writes")
+    p.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Enable verbose logging",
+    )
     return p.parse_args()
 
 
@@ -951,20 +967,21 @@ def main():
 
     if args.dry_run:
         log.info("DRY RUN — no database writes.")
-        ok, n_doc, sk, docket_id = ingest_docket_and_documents(docket_dir, conn=None, dry_run=True)
+        ok, n_doc, sk, docket_id = ingest_docket_and_documents(docket_dir, conn=None, dry_run=True, verbose=args.verbose)
         pc, cs = (0, 0)
         if ok and not args.skip_comments_ingest:
-            pc, cs = ingest_comments(docket_dir, conn=None, dry_run=True)
+            pc, cs = ingest_comments(docket_dir, conn=None, dry_run=True, verbose=args.verbose)
         if ok:
-            log.info("Done. Documents (this run): %d upserted, %d skipped", n_doc, sk)
+            log.info("Documents: %d upserted, %d skipped", n_doc, sk)
             if not args.skip_comments_ingest:
-                log.info("Comments (this run): %d processed, %d skipped", pc, cs)
+                log.info("Comments: %d processed, %d skipped", pc, cs)
             _ingest_summary(
                 docket_dir,
                 docket_id,
                 None,
                 dry_run=True,
                 skip_comments_ingest=args.skip_comments_ingest,
+                verbose=args.verbose,
             )
         else:
             sys.exit(1)
@@ -985,20 +1002,21 @@ def main():
     _require_ingest_schema(conn, args)
     _ensure_comments_document_fk(conn)
     try:
-        ok, n_doc, sk, docket_id = ingest_docket_and_documents(docket_dir, conn, dry_run=False)
+        ok, n_doc, sk, docket_id = ingest_docket_and_documents(docket_dir, conn, dry_run=False, verbose=args.verbose)
         pc, cs = (0, 0)
         if ok and not args.skip_comments_ingest:
-            pc, cs = ingest_comments(docket_dir, conn, dry_run=False)
+            pc, cs = ingest_comments(docket_dir, conn, dry_run=False, verbose=args.verbose)
         if ok:
-            log.info("Done. Documents (this run): %d upserted, %d skipped", n_doc, sk)
+            log.info("Documents: %d upserted, %d skipped", n_doc, sk)
             if not args.skip_comments_ingest:
-                log.info("Comments (this run): %d processed, %d skipped", pc, cs)
+                log.info("Comments: %d processed, %d skipped", pc, cs)
             _ingest_summary(
                 docket_dir,
                 docket_id,
                 conn,
                 dry_run=False,
                 skip_comments_ingest=args.skip_comments_ingest,
+                verbose=args.verbose,
             )
         else:
             sys.exit(1)
