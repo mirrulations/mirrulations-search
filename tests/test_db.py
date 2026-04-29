@@ -11,6 +11,7 @@ from datetime import datetime
 import pytest
 import mirrsearch.db as db_module
 from mirrsearch.db import DBLayer, cfr_part_filter_patterns, get_db
+from mirrsearch.db import _AOSS_FAIL_THRESHOLD  # pylint: disable=protected-access
 
 
 # --- DBLayer instantiation ---
@@ -231,11 +232,11 @@ def test_get_opensearch_connection_blank_port_no_crash(monkeypatch):
 
 def test_opensearch_bucket_size_blank_env_defaults(monkeypatch):
     monkeypatch.setenv("OPENSEARCH_MATCH_DOCKET_BUCKET_SIZE", "")
-    assert db_module._opensearch_match_docket_bucket_size() == 50000
+    assert db_module._opensearch_match_docket_bucket_size() == 1000
 
 def test_opensearch_bucket_size_invalid_env_defaults(monkeypatch):
     monkeypatch.setenv("OPENSEARCH_MATCH_DOCKET_BUCKET_SIZE", "not-a-number")
-    assert db_module._opensearch_match_docket_bucket_size() == 50000
+    assert db_module._opensearch_match_docket_bucket_size() == 1000
 
 
 def test_opensearch_comment_id_terms_size_does_not_exist():
@@ -398,6 +399,15 @@ def test_get_dockets_by_ids_uses_any_and_reuses_row_shape():
     assert len(results) == 1
     assert results[0]["docket_id"] == "DOC-002"
     assert results[0]["docket_title"] == "Other"
+
+
+def test_get_dockets_by_ids_filtered_does_not_cap_unique_dockets():
+    db = DBLayer(engine=_FakeConn([]))
+    db.get_dockets_by_ids_filtered(
+        ["DOC-001", "DOC-002"], docket_type_param="Rulemaking",
+    )
+    sql, _params = (db.engine._executed[0][0], db.engine._executed[0][1])
+    assert "LIMIT 50" not in sql
 
 
 # --- Factory function tests ---
@@ -667,7 +677,7 @@ def test_text_match_terms_same_comment_id_body_and_extracted_counts_once():
 
     db = DBLayer()
 
-    results = db.text_match_terms(["x"], opensearch_client=fake_client)
+    results = db.text_match_terms(["xyz"], opensearch_client=fake_client)
 
     assert len(results) == 1
     assert results[0]["docket_id"] == "D1"
@@ -797,13 +807,17 @@ def test_text_match_terms_docket_only_in_comments():
     assert results[0]["docket_id"] == "COMMENT-ONLY"
     assert results[0]["comment_match_count"] == 10
 
-def test_text_match_terms_malformed_response_returns_empty():
+def test_text_match_terms_malformed_response_propagates():
+    """A malformed AOSS response (missing aggregations) raises so the Flask
+    route returns a real 503 instead of silently dropping hits — silent drops
+    cause total_results to drift between pagination clicks."""
     class BadClient:  # pylint: disable=too-few-public-methods
         def search(self, index, body):  # pylint: disable=unused-argument
             return {}
 
     db = DBLayer()
-    assert db.text_match_terms(["x"], opensearch_client=BadClient()) == []
+    with pytest.raises((KeyError, TypeError)):
+        db.text_match_terms(["xyz"], opensearch_client=BadClient())
 
 
 # --- parallel query tests ---
@@ -1147,23 +1161,82 @@ def test_get_download_jobs_empty_table_returns_empty():
     assert db.get_download_jobs("user@email.com") == []
 
 
-# Lines 400-402: text_match_terms KeyError/AttributeError fallback
-def test_text_match_terms_keyerror_returns_empty():
-    """KeyError in _run_text_match_queries returns empty list."""
-    class KeyErrorClient: #pylint: disable=too-few-public-methods
-        def search(self, index, body):
-            raise KeyError("aggregations")
+def test_text_match_terms_per_index_failure_is_isolated():
+    """One failing AOSS index logs and is dropped; the search still returns
+    results from the indexes that did respond, instead of 503-ing the user."""
+    db_module._reset_aoss_breaker_for_tests()
+
+    class PartiallyBrokenClient:  # pylint: disable=too-few-public-methods
+        def search(self, index, body):  # pylint: disable=unused-argument
+            if index == "comments_extracted_text":
+                raise RuntimeError("connection refused")
+            return {"aggregations": {"by_docket": {"buckets": []}}}
+
     db = DBLayer()
-    assert db.text_match_terms(["x"], opensearch_client=KeyErrorClient()) == []
+    assert db.text_match_terms(["xyz"], opensearch_client=PartiallyBrokenClient()) == []
 
 
-def test_text_match_terms_exception_returns_empty():
-    """Generic exception in _run_text_match_queries returns empty list."""
-    class BrokenClient: #pylint: disable=too-few-public-methods
-        def search(self, index, body):
-            raise RuntimeError("connection refused")
+def test_text_match_terms_429_retries_then_succeeds():
+    """A transient 429 retries once after backoff and succeeds — no 503."""
+    db_module._reset_aoss_breaker_for_tests()
+
+    calls = {"comments_extracted_text": 0}
+
+    class FlakyClient:  # pylint: disable=too-few-public-methods
+        def search(self, index, body):  # pylint: disable=unused-argument
+            if index == "comments_extracted_text":
+                calls["comments_extracted_text"] += 1
+                if calls["comments_extracted_text"] == 1:
+                    raise RuntimeError("429 Too Many Requests")
+            return {"aggregations": {"by_docket": {"buckets": []}}}
+
     db = DBLayer()
-    assert db.text_match_terms(["x"], opensearch_client=BrokenClient()) == []
+    db.text_match_terms(["xyz"], opensearch_client=FlakyClient())
+    assert calls["comments_extracted_text"] == 2
+
+
+def test_text_match_terms_429_persistent_records_breaker():
+    """Persistent 429s on multiple calls open the breaker so subsequent
+    searches skip AOSS entirely and serve SQL results immediately."""
+    db_module._reset_aoss_breaker_for_tests()
+
+    class Always429:  # pylint: disable=too-few-public-methods
+        def search(self, index, body):  # pylint: disable=unused-argument
+            raise RuntimeError("429 Too Many Requests")
+
+    db = DBLayer()
+    for _ in range(3):
+        db.text_match_terms(["xyz"], opensearch_client=Always429())
+    assert db_module._aoss_breaker_is_open() is True
+
+
+def test_text_match_terms_breaker_short_circuits():
+    """When the breaker is open, AOSS isn't called at all."""
+    db_module._reset_aoss_breaker_for_tests()
+    # Force breaker open
+    for _ in range(_AOSS_FAIL_THRESHOLD):
+        db_module._record_aoss_429()
+
+    class ShouldNotBeCalled:  # pylint: disable=too-few-public-methods
+        def search(self, index, body):  # pylint: disable=unused-argument
+            raise AssertionError("AOSS must not be called while breaker is open")
+
+    db = DBLayer()
+    assert db.text_match_terms(["xyz"], opensearch_client=ShouldNotBeCalled()) == []
+    db_module._reset_aoss_breaker_for_tests()
+
+
+def test_text_match_terms_short_query_skips_aoss():
+    """Single-character queries (e.g. "a") match too much of the corpus and
+    time out the bucket aggregation. Skip AOSS entirely so the SQL title
+    search can still serve a useful response."""
+    class ShouldNotBeCalled: #pylint: disable=too-few-public-methods
+        def search(self, index, body):
+            raise AssertionError("AOSS must not be called for short queries")
+    db = DBLayer()
+    assert db.text_match_terms(["a"], opensearch_client=ShouldNotBeCalled()) == []
+    assert db.text_match_terms([""], opensearch_client=ShouldNotBeCalled()) == []
+    assert db.text_match_terms(["  "], opensearch_client=ShouldNotBeCalled()) == []
 
 
 # Lines 465-472: _run_text_match_queries document match accumulation
@@ -1192,7 +1265,7 @@ def test_collect_matched_dockets_unions_both_indexes():
     ]
     fake_client = _FakeOpenSearch([], comment_buckets, extracted_buckets)
     db = DBLayer()
-    results = db.text_match_terms(["x"], opensearch_client=fake_client)
+    results = db.text_match_terms(["xyz"], opensearch_client=fake_client)
     docket_ids = {r["docket_id"] for r in results}
     assert "D1" in docket_ids
     assert "D2" in docket_ids

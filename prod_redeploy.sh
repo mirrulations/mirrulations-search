@@ -2,6 +2,8 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MIRRSEARCH_SERVICE="mirrsearch.service"
 MIRRSEARCH_SERVICE_PATH="/etc/systemd/system/${MIRRSEARCH_SERVICE}"
+WORKER_SERVICE="mirrulations-worker.service"
+WORKER_SERVICE_PATH="/etc/systemd/system/${WORKER_SERVICE}"
 DOMAIN="dev.mirrulations.org"
 
 cd "${PROJECT_ROOT}"
@@ -46,5 +48,7 @@ fi
 
 sudo systemctl stop mirrsearch 2>/dev/null || true
 sudo cp "${PROJECT_ROOT}/${MIRRSEARCH_SERVICE}" "${MIRRSEARCH_SERVICE_PATH}"
+sudo systemctl stop mirrulations-worker 2>/dev/null || true
+sudo cp "${PROJECT_ROOT}/${WORKER_SERVICE}" "${WORKER_SERVICE_PATH}"
 sudo systemctl daemon-reload
 ./prod_up.sh

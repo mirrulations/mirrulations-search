@@ -66,9 +66,9 @@ def test_process_job_marks_processing_before_ready(monkeypatch, tmp_path):
     monkeypatch.setattr(worker, "_upload_to_s3", lambda *_args: "s3://bucket/downloads/job-1.zip")
 
     payload = (
-        '{"job_id":"job-1","docket_ids":["CMS-2025-0240"],'
-        '"format":"raw","include_binaries":false}'
-    )
+    '{"job_id":"job-1","docket_ids":["CMS-2025-0240"],'
+    '"format":"raw","include_binaries":false,"user_email":"test@example.com"}'
+)
     worker._process_job(payload) # pylint: disable=protected-access
 
     assert statuses == [

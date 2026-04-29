@@ -8,10 +8,9 @@ Type=simple
 User=ec2-user
 WorkingDirectory=/home/ec2-user/mirrulations-search
 
-# Environment — override these in /etc/systemd/system/mirrulations-worker.service.d/env.conf
-# or set them directly here for the EC2 instance
 EnvironmentFile=-/home/ec2-user/mirrulations-search/.env
 Environment="PATH=/home/ec2-user/mirrulations-search/.venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PYTHONPATH=/home/ec2-user/mirrulations-search/src"
 
 Environment=REDIS_HOST=localhost
 Environment=REDIS_PORT=6379
@@ -22,11 +21,9 @@ Environment=CSV_REPO_DIR=/home/ec2-user/mirrulations-csv
 ExecStart=/home/ec2-user/mirrulations-search/.venv/bin/python \
     /home/ec2-user/mirrulations-search/worker.py
 
-# Restart policy: always restart on exit (crash or clean), with a short delay
 Restart=always
 RestartSec=5
 
-# Kill cleanly on stop
 KillSignal=SIGINT
 TimeoutStopSec=30
 

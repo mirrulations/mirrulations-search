@@ -433,6 +433,26 @@ body {
 	margin-top: 10px;
 	box-shadow: 0 4px 12px rgba(0,0,0,0.06);
 	width: 100%;
+	position: relative;
+  }
+
+  .result-card--exact-match {
+	border: 2px solid #f59e0b;
+	border-left-width: 6px;
+	box-shadow: 0 4px 14px rgba(245, 158, 11, 0.18);
+  }
+
+  .result-card-exact-badge {
+	position: absolute;
+	top: -10px;
+	right: 14px;
+	background: #f59e0b;
+	color: white;
+	font-size: 12px;
+	font-weight: 600;
+	padding: 3px 10px;
+	border-radius: 999px;
+	letter-spacing: 0.02em;
   }
 
  .result-title {
@@ -445,6 +465,24 @@ body {
     margin: 4px 0;
     font-size: 14px;
     color: #555;
+  }
+
+  .cfr-toggle-btn {
+    border: 1px solid #d8dcee;
+    background: #fbfbfe;
+    color: #4a50da;
+    border-radius: 999px;
+    padding: 2px 8px;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 800;
+    cursor: pointer;
+	margin-left: 3px;
+  }
+
+  .cfr-toggle-btn:hover {
+    background: #eef0ff;
+    border-color: #bfc4f3;
   }
 
   .result-card-body {
@@ -471,25 +509,82 @@ body {
   }
 
   .pagination-div {
-	margin-top: 30px;
+	margin-top: 32px;
 	display: flex;
+	align-items: center;
 	justify-content: center;
-	gap: 15px;
+	gap: 6px;
   }
 
-  .page-button {
-	background-color: #6366f1;
-	border-radius: 5px;
-	border: none;
-	transition: all ease-in-out 0.3s;
-
+  .page-btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 36px;
+	height: 36px;
+	border-radius: 8px;
+	border: 1.5px solid #e0e0e0;
+	background: #fff;
+	color: #444;
+	font-size: 16px;
+	font-weight: 600;
+	cursor: pointer;
+	transition: all 0.15s ease;
   }
 
-  .page-button:hover {
-	scale: 1.04;
+  .page-btn:hover:not(:disabled) {
+	background: #6366f1;
+	border-color: #6366f1;
+	color: #fff;
+  }
 
+  .page-btn:disabled {
+	opacity: 0.35;
+	cursor: default;
+  }
+
+  .page-info {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 14px;
+	color: #555;
+	margin: 0 8px;
+	user-select: none;
+  }
+
+  .page-input {
+	width: 48px;
+	height: 34px;
+	text-align: center;
+	border: 1.5px solid #ddd;
+	border-radius: 6px;
+	font-size: 14px;
+	font-weight: 600;
+	color: #333;
+	outline: none;
+	transition: border-color 0.15s;
+	-moz-appearance: textfield;
+  }
+
+  .page-input::-webkit-outer-spin-button,
+  .page-input::-webkit-inner-spin-button {
+	-webkit-appearance: none;
+	margin: 0;
+  }
+
+  .page-input:focus {
+	border-color: #6366f1;
+	box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
   }
 
   .calendar-div {
 	margin-top: 20px;
   }
+.search-disclaimer {
+  margin: 0.4rem 0 0.8rem;
+  font-size: 0.8rem;
+  color: #6b7280;
+  font-style: italic;
+}
+

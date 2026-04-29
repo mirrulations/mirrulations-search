@@ -177,7 +177,7 @@ def test_search_dockets_postgres_start_date_filter():
     db._search_dockets_postgres("test", start_date="2025-01-01")
     assert len(db.engine.calls) > 0, "No SQL was executed"
     sql, params = db.engine.calls[0]
-    assert "d.modify_date::date >= :start_date::date" in sql
+    assert "CAST(d.modify_date AS date) >= CAST(:start_date AS date)" in sql
     assert params.get("start_date") == "2025-01-01"
 
 
@@ -186,7 +186,7 @@ def test_search_dockets_postgres_end_date_filter():
     db._search_dockets_postgres("test", end_date="2026-01-01")
     assert len(db.engine.calls) > 0, "No SQL was executed"
     sql, params = db.engine.calls[0]
-    assert "d.modify_date::date <= :end_date::date" in sql
+    assert "CAST(d.modify_date AS date) <= CAST(:end_date AS date)" in sql
     assert params.get("end_date") == "2026-01-01"
 
 
@@ -195,8 +195,8 @@ def test_search_dockets_postgres_both_dates():
     db._search_dockets_postgres("test", start_date="2025-01-01", end_date="2026-01-01")
     assert len(db.engine.calls) > 0, "No SQL was executed"
     sql, params = db.engine.calls[0]
-    assert "d.modify_date::date >= :start_date::date" in sql
-    assert "d.modify_date::date <= :end_date::date" in sql
+    assert "CAST(d.modify_date AS date) >= CAST(:start_date AS date)" in sql
+    assert "CAST(d.modify_date AS date) <= CAST(:end_date AS date)" in sql
     assert params.get("start_date") == "2025-01-01"
     assert params.get("end_date") == "2026-01-01"
 

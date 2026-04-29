@@ -76,3 +76,11 @@ export async function getDownloadJobs() {
     if (!response.ok) throw new Error(`Failed to fetch download jobs: ${response.status}`);
     return response.json();
 }
+
+export async function deleteDownloadJob(jobId) {
+    const response = await fetch(`/download/jobs/${jobId}`, {
+        method: "DELETE",
+    });
+    if (response.status === 401) throw new Error("UNAUTHORIZED");
+    if (!response.ok) throw new Error(`Failed to delete download job: ${response.status}`);
+}

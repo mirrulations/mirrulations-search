@@ -1,12 +1,18 @@
 # pylint: disable=too-many-lines
 import json
+import logging
+import time
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import List, Dict, Any, Set, Optional
 import os
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from opensearchpy import OpenSearch
+
+log = logging.getLogger(__name__)
 
 try:
     import requests
@@ -95,7 +101,42 @@ def _parse_positive_int_env(var_name: str, default: int) -> int:
 
 def _opensearch_match_docket_bucket_size() -> int:
     """How many docket buckets to request for corpus-wide match aggregations."""
-    return _parse_positive_int_env("OPENSEARCH_MATCH_DOCKET_BUCKET_SIZE", 50000)
+    return _parse_positive_int_env("OPENSEARCH_MATCH_DOCKET_BUCKET_SIZE", 1000)
+
+
+# AOSS 429 resilience: track recent throttle events and short-circuit AOSS
+# when the same query stream keeps overwhelming OCU capacity.
+_AOSS_FAIL_WINDOW_SEC = 30.0
+_AOSS_FAIL_THRESHOLD = 2
+_AOSS_BREAKER_COOLDOWN_SEC = 30.0
+_AOSS_RETRY_BACKOFF_SEC = 0.25
+
+_aoss_failures: "deque[float]" = deque(maxlen=_AOSS_FAIL_THRESHOLD)
+_aoss_breaker_open_until: float = 0.0  # pylint: disable=invalid-name
+
+
+def _is_429(exc: BaseException) -> bool:
+    msg = str(exc)
+    return "429" in msg or "Too Many Requests" in msg
+
+
+def _aoss_breaker_is_open() -> bool:
+    return time.monotonic() < _aoss_breaker_open_until
+
+
+def _record_aoss_429() -> None:
+    global _aoss_breaker_open_until  # pylint: disable=global-statement
+    now = time.monotonic()
+    _aoss_failures.append(now)
+    recent = [t for t in _aoss_failures if now - t <= _AOSS_FAIL_WINDOW_SEC]
+    if len(recent) >= _AOSS_FAIL_THRESHOLD:
+        _aoss_breaker_open_until = now + _AOSS_BREAKER_COOLDOWN_SEC
+
+
+def _reset_aoss_breaker_for_tests() -> None:
+    global _aoss_breaker_open_until  # pylint: disable=global-statement
+    _aoss_failures.clear()
+    _aoss_breaker_open_until = 0.0
 
 
 
@@ -121,7 +162,6 @@ def _build_engine(dsn: str) -> Engine:
         max_overflow=5,
         connect_args={
             "connect_timeout": 5,
-            "options": "-c statement_timeout=30000",
         },
     )
 
@@ -212,12 +252,14 @@ class DBLayer:  # pylint: disable=too-many-public-methods
             agency: List[str] = None,
             cfr_part_param: List[str] = None,
             start_date: str = None,
-            end_date: str = None) \
+            end_date: str = None,
+            exact_docket_id: str = None) \
             -> List[Dict[str, Any]]:
         if self.engine is None:
             return []
         results = self._search_dockets_postgres(
-            query, docket_type_param, agency, cfr_part_param, start_date, end_date
+            query, docket_type_param, agency, cfr_part_param, start_date, end_date,
+            exact_docket_id=exact_docket_id,
         )
         exact_pairs = _cfr_exact_title_part_pairs(cfr_part_param)
         if not exact_pairs:
@@ -251,8 +293,21 @@ class DBLayer:  # pylint: disable=too-many-public-methods
             agency: List[str] = None,
             cfr_part_param: List[str] = None,
             start_date: str = None,
-            end_date: str = None) -> List[Dict[str, Any]]:
-        sql = """
+            end_date: str = None,
+            exact_docket_id: str = None) -> List[Dict[str, Any]]:
+        # Agency rule codes like CMS-1849-P aren't stored in dockets at all;
+        # they live in federal_register_documents.docket_ids and the regs.gov
+        # docket sits in document_id with a trailing -NNNN we strip off.
+        fr_clause = ""
+        if exact_docket_id:
+            fr_clause = (
+                " OR d.docket_id IN ("
+                "SELECT regexp_replace(fr.document_id, '-[0-9]+$', '') "
+                "FROM federal_register_documents fr "
+                "WHERE EXISTS (SELECT 1 FROM unnest(fr.docket_ids) e "
+                "WHERE e ILIKE :exact_pattern))"
+            )
+        sql = f"""
             SELECT DISTINCT
                 d.docket_id,
                 d.docket_title,
@@ -266,9 +321,11 @@ class DBLayer:  # pylint: disable=too-many-public-methods
             JOIN documents doc ON doc.docket_id = d.docket_id
             LEFT JOIN cfrparts cp ON cp.frdocnum = doc.frdocnum
             LEFT JOIN links l ON l.title = cp.title AND l.cfrPart = cp.cfrPart
-            WHERE d.docket_title ILIKE :query
+            WHERE (d.docket_title ILIKE :query OR d.docket_id ILIKE :query{fr_clause})
         """
         params: Dict[str, Any] = {"query": f"%{(query or '').strip().lower()}%"}
+        if exact_docket_id:
+            params["exact_pattern"] = f"{exact_docket_id}%"
 
         if docket_type_param:
             sql += " AND d.docket_type = :docket_type"
@@ -281,11 +338,11 @@ class DBLayer:  # pylint: disable=too-many-public-methods
                 params[f"agency_{i}"] = f"%{a}%"
 
         if start_date:
-            sql += " AND d.modify_date::date >= :start_date::date"
+            sql += " AND CAST(d.modify_date AS date) >= CAST(:start_date AS date)"
             params["start_date"] = start_date
 
         if end_date:
-            sql += " AND d.modify_date::date <= :end_date::date"
+            sql += " AND CAST(d.modify_date AS date) <= CAST(:end_date AS date)"
             params["end_date"] = end_date
 
         cfr_patterns = cfr_part_filter_patterns(cfr_part_param)
@@ -352,6 +409,90 @@ class DBLayer:  # pylint: disable=too-many-public-methods
             ORDER BY d.modify_date DESC, d.docket_id, cp.title, cp.cfrPart
         """
         rows = self._run(sql, {"docket_ids": list(docket_ids)})
+        dockets = {}
+        for row in rows:
+            self._process_docket_row(dockets, row)
+        return [
+            {**d, "cfr_refs": list(d["cfr_refs"].values())}
+            for d in dockets.values()
+        ]
+    def get_dockets_by_ids_filtered(self, docket_ids: List[str], docket_type_param: str = None,#pylint: disable=too-many-arguments, too-many-positional-arguments, too-many-locals, too-many-branches, too-many-statements
+        agency: List[str] = None, cfr_part_param: List[str] = None, start_date: str = None,
+        end_date: str = None, ) -> List[Dict[str, Any]]:
+        if self.engine is None or not docket_ids:
+            return []
+
+        sql = """
+            SELECT DISTINCT
+                d.docket_id,
+                d.docket_title,
+                d.agency_id,
+                d.docket_type,
+                d.modify_date,
+                cp.title,
+                cp.cfrPart,
+                l.link
+            FROM dockets d
+            JOIN documents doc ON doc.docket_id = d.docket_id
+            LEFT JOIN cfrparts cp ON cp.frdocnum = doc.frdocnum
+            LEFT JOIN links l ON l.title = cp.title AND l.cfrPart = cp.cfrPart
+            WHERE d.docket_id = ANY(:docket_ids)
+        """
+        params: Dict[str, Any] = {"docket_ids": list(docket_ids)}
+
+        if docket_type_param:
+            sql += " AND d.docket_type = :docket_type"
+            params["docket_type"] = docket_type_param
+
+        if agency:
+            clauses = " OR ".join(f"d.agency_id ILIKE :agency_{i}" for i in range(len(agency)))
+            sql += f" AND ({clauses})"
+            for i, a in enumerate(agency):
+                params[f"agency_{i}"] = f"%{a}%"
+
+        if start_date:
+            sql += " AND CAST(d.modify_date AS date) >= CAST(:start_date AS date)"
+            params["start_date"] = start_date
+
+        if end_date:
+            sql += " AND CAST(d.modify_date AS date) <= CAST(:end_date AS date)"
+            params["end_date"] = end_date
+
+        cfr_patterns = cfr_part_filter_patterns(cfr_part_param)
+        if cfr_patterns:
+            clauses = " OR ".join(f"cp3.cfrPart = :cfr_{i}" for i in range(len(cfr_patterns)))
+            sql += (
+                " AND EXISTS ("
+                "SELECT 1 FROM documents d3 "
+                "JOIN cfrparts cp3 ON cp3.frdocnum = d3.frdocnum "
+                "WHERE d3.docket_id = d.docket_id "
+                f"AND ({clauses})"
+                ")"
+            )
+            for i, p in enumerate(cfr_patterns):
+                params[f"cfr_{i}"] = p
+
+        exact_pairs = _cfr_exact_title_part_pairs(cfr_part_param)
+        if exact_pairs:
+            exact_clauses = " OR ".join(
+                f"(cp2.title = :etitle_{i} AND cp2.cfrPart = :epart_{i})"
+                for i in range(len(exact_pairs))
+            )
+            sql += (
+                " AND EXISTS ("
+                "SELECT 1 FROM documents d2 "
+                "JOIN cfrparts cp2 ON cp2.frdocnum = d2.frdocnum "
+                "WHERE d2.docket_id = d.docket_id "
+                f"AND ({exact_clauses})"
+                ")"
+            )
+            for i, (title, part) in enumerate(exact_pairs):
+                params[f"etitle_{i}"] = title
+                params[f"epart_{i}"] = part
+
+        sql += " ORDER BY d.modify_date DESC, d.docket_id, cp.title, cp.cfrPart"
+
+        rows = self._run(sql, params)
         dockets = {}
         for row in rows:
             self._process_docket_row(dockets, row)
@@ -479,32 +620,66 @@ class DBLayer:  # pylint: disable=too-many-public-methods
 
     def text_match_terms(
             self, terms: List[str], opensearch_client=None) -> List[Dict[str, Any]]:
-        """Search OpenSearch for dockets matching terms across all indexes."""
-        if opensearch_client is None:
-            opensearch_client = get_opensearch_connection()
-        try:
-            return self._run_text_match_queries(opensearch_client, terms)
-        except (KeyError, AttributeError) as e:
-            print(f"OpenSearch query failed: {e}")
-            return []
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            print(f"OpenSearch query failed (fallback to SQL): {e}")
-            return []
+        """Search OpenSearch for dockets matching terms across all indexes.
 
-    def _run_text_match_queries(  # pylint: disable=too-many-locals,too-many-statements
-            self, opensearch_client, terms: List[str]) -> List[Dict[str, Any]]:
-        """Execute all three OpenSearch queries in parallel and merge their results.
+        Single-character terms (e.g. "a") match essentially every comment in
+        the corpus and reliably time out the bucket aggregation, returning a
+        503 to the user. For those, skip AOSS entirely — the SQL title search
+        still runs and returns useful results. The 2-char threshold can be
+        revisited if legitimately-short tokens like "AI" or "5G" become a
+        common search.
 
-        All three index searches are fired simultaneously via a thread pool so
-        total wall-clock time is roughly the slowest single query rather than
-        the sum of all three.  Query bodies and result merging are unchanged.
+        When the caller doesn't pass an opensearch_client (i.e. real requests),
+        results are cached so pagination clicks for the same query return an
+        identical hit list. Without this, per-call AOSS variance (one of the
+        three aggregation queries occasionally erroring or timing out) caused
+        total_results to drift between page navigations.
         """
-        def safe_search(index_name: str, body: Dict) -> Dict:
-            try:
-                return opensearch_client.search(index=index_name, body=body)
-            except Exception as e:  # pylint: disable=broad-exception-caught
-                print(f"OpenSearch index query failed for '{index_name}': {e}")
-                return {"aggregations": {"by_docket": {"buckets": []}}}
+        if any(len((t or "").strip()) < 2 for t in terms):
+            return []
+        if _aoss_breaker_is_open():
+            return []
+        if opensearch_client is not None:
+            return self._run_text_match_queries(opensearch_client, terms)
+        return self._cached_text_match_terms(tuple(terms))
+
+    @lru_cache(maxsize=128)
+    def _cached_text_match_terms(self, terms_tuple):
+        return self._run_text_match_queries(
+            get_opensearch_connection(), list(terms_tuple)
+        )
+
+    @staticmethod
+    def _aoss_search(opensearch_client, index: str, body: Dict) -> Optional[Dict]:
+        """Run an AOSS search; one 250ms retry on 429, isolate failures per index.
+
+        Returns None when the index errors after retry. Records 429s for the
+        circuit breaker so a sustained throttle stops piling on AOSS.
+        """
+        try:
+            return opensearch_client.search(index=index, body=body)
+        except Exception as exc:  # pylint: disable=broad-except
+            if _is_429(exc):
+                time.sleep(_AOSS_RETRY_BACKOFF_SEC)
+                try:
+                    return opensearch_client.search(index=index, body=body)
+                except Exception as retry_exc:  # pylint: disable=broad-except
+                    if _is_429(retry_exc):
+                        _record_aoss_429()
+                    log.warning("AOSS index %s failed after retry: %s", index, retry_exc)
+                    return None
+            log.warning("AOSS index %s failed: %s", index, exc)
+            return None
+
+    def _run_text_match_queries(  # pylint: disable=too-many-locals
+            self, opensearch_client, terms: List[str]) -> List[Dict[str, Any]]:
+        """Run the three OpenSearch queries in parallel and merge what came back.
+
+        Each index call goes through ``_aoss_search`` so a 429 retry, the
+        circuit breaker, and per-index isolation all still apply. Wall-clock
+        time is roughly the slowest single query instead of the sum.
+        """
+        docket_counts: Dict = {}
 
         doc_match_clauses = [
             {"multi_match": {
@@ -530,11 +705,10 @@ class DBLayer:  # pylint: disable=too-many-public-methods
                  "matching_extracted", extracted_match_clauses)),
         ]
 
-        # Fire all three queries in parallel; keyed by index name for deterministic merging.
-        responses: Dict[str, Dict] = {}
+        responses: Dict[str, Optional[Dict]] = {}
         with ThreadPoolExecutor(max_workers=3) as pool:
             futures = {
-                pool.submit(safe_search, index_name, body): index_name
+                pool.submit(self._aoss_search, opensearch_client, index_name, body): index_name
                 for index_name, body in queries
             }
             for future in futures:
@@ -545,19 +719,21 @@ class DBLayer:  # pylint: disable=too-many-public-methods
         comment_resp = responses["comments"]
         extracted_resp = responses["comments_extracted_text"]
 
-        docket_counts: Dict = {}
-        self._accumulate_counts(
-            docket_counts,
-            doc_resp["aggregations"]["by_docket"]["buckets"],
-            "matching_docs",
-            "document_match_count"
-        )
+        if doc_resp is not None:
+            self._accumulate_counts(
+                docket_counts,
+                doc_resp["aggregations"]["by_docket"]["buckets"],
+                "matching_docs",
+                "document_match_count"
+            )
 
-        comment_counts = self._extract_cardinality_counts(
-            comment_resp, "matching_comments"
+        comment_counts = (
+            self._extract_cardinality_counts(comment_resp, "matching_comments")
+            if comment_resp is not None else {}
         )
-        extracted_counts = self._extract_cardinality_counts(
-            extracted_resp, "matching_extracted"
+        extracted_counts = (
+            self._extract_cardinality_counts(extracted_resp, "matching_extracted")
+            if extracted_resp is not None else {}
         )
         for did in set(comment_counts) | set(extracted_counts):
             docket_counts.setdefault(
@@ -959,6 +1135,16 @@ class DBLayer:  # pylint: disable=too-many-public-methods
             for row in rows
         ]
 
+    def delete_download_job(self, job_id: str, user_email: str) -> bool:
+        """Delete a download job owned by the user. Returns True if deleted."""
+        if self.engine is None:
+            return False
+        rowcount = self._run_write(
+            "DELETE FROM download_jobs WHERE job_id = :job_id AND user_email = :email",
+            {"job_id": job_id, "email": user_email}
+        )
+        return rowcount > 0
+
 
 def _get_secrets_from_aws() -> Dict[str, str]:
     if boto3 is None:
@@ -1031,7 +1217,9 @@ class _AossClient:  # pylint: disable=too-few-public-methods
 
     def search(self, index, body):
         url = f"{self.base_url}/{index}/_search"
-        resp = self.session.post(url, json=body, timeout=30)
+        # Bumped from 30s — broad bucket aggregations on large corpora can
+        # need more headroom. Gunicorn worker timeout is 120s.
+        resp = self.session.post(url, json=body, timeout=60)
         resp.raise_for_status()
         return resp.json()
 

@@ -217,6 +217,12 @@
     transition: background 0.15s ease, opacity 0.15s ease;
     margin-left: auto;
   }
+
+  .modal-btn-add-small {
+    font-size: 0.85rem;
+    padding: 0.45rem 1.2rem;
+    border-radius: 50px;
+  }
   
   .modal-btn-add:hover:not(:disabled) {
     background: #3b5bdb;

@@ -16,7 +16,7 @@ const MAX_DOCKETS = 10;
 const SORT_MODIFIED = "modified";
 const SORT_ALPHABETICAL = "alphabetical";
 
-export default function Collections() {
+export default function Collections({ onOpenDownloadStatus }) {
   const [collections, setCollections] = useState([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -29,6 +29,7 @@ export default function Collections() {
   const [dockets, setDockets] = useState([]);
   const [pagination, setPagination] = useState(null);
   const [page, setPage] = useState(1);
+  const [pageInput, setPageInput] = useState("1");
   const [docketsLoading, setDocketsLoading] = useState(false);
   const [showDownloadModal, setShowDownloadModal] = useState(false);
   const [sortMode, setSortMode] = useState(SORT_MODIFIED);
@@ -107,6 +108,10 @@ export default function Collections() {
     setPage(1);
     loadDockets(selectedCollectionId, 1, sortMode);
   }, [selectedCollectionId]);
+
+  useEffect(() => {
+    setPageInput(String(page));
+  }, [page]);
 
   useEffect(() => {
     if (!selectedCollectionId) return;
@@ -488,25 +493,72 @@ export default function Collections() {
                     </article>
                   ))}
                 </div>
-                <div className="pagination-div">
-                  <button
-                    className="page-button"
-                    disabled={!pagination?.hasPrev}
-                    onClick={() => setPage((p) => p - 1)}
-                  >
-                    <ArrowLeftIcon color="white" size={32} />
-                  </button>
-                  <span className="page-info">
-                    Page {pagination?.page} of {pagination?.totalPages}
-                  </span>
-                  <button
-                    className="page-button"
-                    disabled={!pagination?.hasNext}
-                    onClick={() => setPage((p) => p + 1)}
-                  >
-                    <ArrowRightIcon color="white" size={32} />
-                  </button>
-                </div>
+                {pagination?.totalPages > 0 && (
+                  <div className="pagination-div">
+                    <button
+                      className="page-btn"
+                      disabled={!pagination?.hasPrev}
+                      onClick={() => setPage(1)}
+                      title="First page"
+                    >
+                      «
+                    </button>
+                    <button
+                      className="page-btn"
+                      disabled={!pagination?.hasPrev}
+                      onClick={() => setPage((p) => p - 1)}
+                      title="Previous page"
+                    >
+                      <ArrowLeftIcon weight="bold" size={16} />
+                    </button>
+                    <span className="page-info">
+                      Page{" "}
+                      <input
+                        type="number"
+                        className="page-input"
+                        min={1}
+                        max={pagination?.totalPages ?? 1}
+                        value={pageInput}
+                        onChange={(e) => setPageInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            const val = Number(pageInput);
+                            if (val >= 1 && val <= (pagination?.totalPages ?? 1)) {
+                              setPage(val);
+                            } else {
+                              setPageInput(String(page));
+                            }
+                          }
+                        }}
+                        onBlur={() => {
+                          const val = Number(pageInput);
+                          if (val >= 1 && val <= (pagination?.totalPages ?? 1) && val !== page) {
+                            setPage(val);
+                          } else {
+                            setPageInput(String(page));
+                          }
+                        }}
+                      />{" "}
+                      of {pagination?.totalPages}
+                    </span>
+                    <button
+                      className="page-btn"
+                      disabled={!pagination?.hasNext}
+                      onClick={() => setPage((p) => p + 1)}
+                      title="Next page"
+                    >
+                      <ArrowRightIcon weight="bold" size={16} />
+                    </button>
+                    <button
+                      className="page-btn"
+                      disabled={!pagination?.hasNext}
+                      onClick={() => setPage(pagination?.totalPages)}
+                      title="Last page"
+                    >
+                      »
+                    </button>
+                  </div>
+                )}
               </>
             )}
           </>
@@ -518,6 +570,7 @@ export default function Collections() {
           collectionName={selectedCollection?.name}
           docketIds={docketsForModal}
           onClose={() => setShowDownloadModal(false)}
+          onOpenDownloadStatus={onOpenDownloadStatus}
         />
       )}
     </section>

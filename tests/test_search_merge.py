@@ -22,8 +22,14 @@ class _FakeDbMerge:
         self.get_dockets_by_ids_calls.append(list(docket_ids))
         return list(self._by_id_rows)
 
+    def get_dockets_by_ids_filtered(  # pylint: disable=too-many-arguments,too-many-positional-arguments,unused-argument
+            self, docket_ids, docket_type_param=None,
+            agency=None, cfr_part_param=None,
+            start_date=None, end_date=None):
+        self.get_dockets_by_ids_calls.append(list(docket_ids))
+        return list(self._by_id_rows)
+
     def get_docket_document_comment_totals(self, docket_ids, opensearch_client=None):  # pylint: disable=unused-argument
-        # Provide deterministic denominators for assertions.
         dids = [str(d) for d in docket_ids]
         totals = {
             "A": {"document_total_count": 10, "comment_total_count": 2},
@@ -31,7 +37,6 @@ class _FakeDbMerge:
             "C": {"document_total_count": 7, "comment_total_count": 3},
         }
         return {d: totals[d] for d in dids if d in totals}
-
 
 def test_search_json_sanitizes_modify_date():
     """Postgres-style date objects become ISO strings for JSON responses."""
@@ -157,8 +162,9 @@ def test_merge_full_text_kept_when_agency_filter_matches():
     db = _FakeDbMerge(sql_rows, os_hits, by_id_rows)
     logic = InternalLogic("x", db_layer=db)
     out = logic.search("q", agency=["CMS"], page=1, page_size=10)
-    # B ranks above A (higher match counts vs totals from _FakeDbMerge).
-    assert [r["docket_id"] for r in out["results"]] == ["B", "A"]
+    # A is a title/docket-id match, B is OpenSearch-only — title matches now
+    # rank above FT-only hits regardless of comment-text match count.
+    assert [r["docket_id"] for r in out["results"]] == ["A", "B"]
 
 
 def test_merge_full_text_dropped_when_docket_type_filter_no_match():
@@ -250,7 +256,87 @@ def test_merge_full_text_kept_when_cfr_pattern_filter_matches():
     db = _FakeDbMerge(sql_rows, os_hits, by_id_rows)
     logic = InternalLogic("x", db_layer=db)
     out = logic.search("q", cfr_part_param=["413"], page=1, page_size=10)
-    assert [r["docket_id"] for r in out["results"]] == ["B", "A"]
+    # Title match A outranks FT-only B even though B has higher AOSS counts.
+    assert [r["docket_id"] for r in out["results"]] == ["A", "B"]
+
+
+class _FakePagingDb:
+    """db_layer for testing page-2 ordering on the fast path.
+
+    Returns 25 OS-only hits with descending match counts so we can assert that
+    page 2 (size 10) returns the next 10 by match count, not an arbitrary slice.
+    """
+
+    def __init__(self):
+        self.fetch_calls = []
+        self._all_rows = {
+            f"D{i:02d}": {"docket_id": f"D{i:02d}", "docket_title": f"t{i}", "cfr_refs": []}
+            for i in range(25)
+        }
+
+    def search(self, *_a, **_kw):
+        return []
+
+    def text_match_terms(self, _terms, opensearch_client=None):  # pylint: disable=unused-argument
+        # Higher i → higher match count, so D24 ranks first, D00 last.
+        return [
+            {"docket_id": f"D{i:02d}", "document_match_count": i, "comment_match_count": 0}
+            for i in range(25)
+        ]
+
+    def get_dockets_by_ids(self, docket_ids):
+        self.fetch_calls.append(list(docket_ids))
+        return [self._all_rows[d] for d in docket_ids if d in self._all_rows]
+
+    def get_docket_document_comment_totals(self, docket_ids, opensearch_client=None):  # pylint: disable=unused-argument
+        return {str(d): {"document_total_count": 0, "comment_total_count": 0} for d in docket_ids}
+
+
+def test_pagination_page_two_returns_next_ten_by_match_count():
+    """Fast path: page 2 must contain the next 10 dockets by match count, not the
+    arbitrary slice of unsorted candidates that the original perf commit returned.
+    """
+    db = _FakePagingDb()
+    logic = InternalLogic("x", db_layer=db)
+
+    page1 = logic.search("q", page=1, page_size=10)
+    page2 = logic.search("q", page=2, page_size=10)
+
+    page1_ids = [r["docket_id"] for r in page1["results"]]
+    page2_ids = [r["docket_id"] for r in page2["results"]]
+
+    assert page1_ids == [f"D{i:02d}" for i in range(24, 14, -1)]
+    assert page2_ids == [f"D{i:02d}" for i in range(14, 4, -1)]
+    assert page1["pagination"]["total_results"] == 25
+    assert page1["pagination"]["total_pages"] == 3
+    # Fast path must only fetch RDS for the 10 IDs on the requested page.
+    assert all(len(call) == 10 for call in db.fetch_calls)
+
+
+def test_filtered_total_results_matches_filtered_set():
+    """Slow path: total_results reflects the filtered count, not the
+    pre-filter OpenSearch hit count."""
+    sql_rows = []
+    # 5 OS-only hits, but only 2 will survive the agency filter.
+    os_hits = [
+        {"docket_id": f"D{i}", "document_match_count": i, "comment_match_count": 0}
+        for i in range(5)
+    ]
+    by_id_rows = [
+        {"docket_id": "D0", "docket_title": "t", "cfr_refs": [], "agency_id": "EPA"},
+        {"docket_id": "D1", "docket_title": "t", "cfr_refs": [], "agency_id": "CMS"},
+        {"docket_id": "D2", "docket_title": "t", "cfr_refs": [], "agency_id": "EPA"},
+        {"docket_id": "D3", "docket_title": "t", "cfr_refs": [], "agency_id": "CMS"},
+        {"docket_id": "D4", "docket_title": "t", "cfr_refs": [], "agency_id": "EPA"},
+    ]
+    db = _FakeDbMerge(sql_rows, os_hits, by_id_rows)
+    logic = InternalLogic("x", db_layer=db)
+    out = logic.search("q", agency=["CMS"], page=1, page_size=10)
+
+    ids = [r["docket_id"] for r in out["results"]]
+    assert set(ids) == {"D1", "D3"}
+    assert out["pagination"]["total_results"] == 2
+    assert out["pagination"]["total_pages"] == 1
 
 
 class _FakeDbCollectionDockets:
@@ -259,7 +345,7 @@ class _FakeDbCollectionDockets:
     def get_collections(self, user_email):  # pylint: disable=unused-argument
         return [{"collection_id": 7, "docket_ids": ["DOCKET-1"]}]
 
-    def get_dockets_by_ids(self, docket_ids):
+    def get_dockets_by_ids(self, docket_ids):  # pylint: disable=unused-argument
         return [
             {
                 "docket_id": "DOCKET-1",
@@ -270,9 +356,38 @@ class _FakeDbCollectionDockets:
         ]
 
     def get_docket_document_comment_totals(self, docket_ids, opensearch_client=None):  # pylint: disable=unused-argument
-        return {
-            "DOCKET-1": {"document_total_count": 5, "comment_total_count": 3}
-        }
+        return {"DOCKET-1": {"document_total_count": 5, "comment_total_count": 3}}
+
+
+def test_search_marks_exact_docket_id_match():
+    """Row whose docket_id matches the query (case-insensitive) gets the
+    isExactMatch flag — the frontend uses this to anchor and highlight it."""
+    sql_rows = [
+        {"docket_id": "CMS-2025-0050", "docket_title": "ESRD PPS", "cfr_refs": []},
+        {"docket_id": "CMS-2025-0099", "docket_title": "Other CMS rule", "cfr_refs": []},
+    ]
+    db = _FakeDbMerge(sql_rows, os_hits=[], by_id_rows=[])
+    logic = InternalLogic("x", db_layer=db)
+    out = logic.search("cms-2025-0050", page=1, page_size=10)
+
+    matched = [r for r in out["results"] if r.get("isExactMatch")]
+    assert len(matched) == 1
+    assert matched[0]["docket_id"] == "CMS-2025-0050"
+    other = next(r for r in out["results"] if r["docket_id"] == "CMS-2025-0099")
+    assert "isExactMatch" not in other
+
+
+def test_search_no_exact_match_when_query_does_not_match_id():
+    """Free-text queries that aren't a docket-id don't tag any row."""
+    sql_rows = [
+        {"docket_id": "CMS-2025-0050", "docket_title": "ESRD PPS", "cfr_refs": []},
+    ]
+    db = _FakeDbMerge(sql_rows, os_hits=[], by_id_rows=[])
+    logic = InternalLogic("x", db_layer=db)
+    out = logic.search("medicare", page=1, page_size=10)
+
+    assert all("isExactMatch" not in r for r in out["results"])
+
 
 def test_get_collection_dockets_non_empty_sanitizes_and_paginates():
     """Branch with docket_ids loads rows, sanitizes modify_date, returns slice + pagination."""

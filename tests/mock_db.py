@@ -56,7 +56,8 @@ class MockDBLayer:  # pylint: disable=too-many-public-methods,protected-access
             agency: List[str] = None,
             cfr_part_param: List[str] = None,
             start_date: str = None,
-            end_date: str = None) \
+            end_date: str = None,
+            exact_docket_id: str = None) \
             -> List[Dict[str, Any]]:
         q = re.sub(r'[^\w\s-]', '', (query or "")).strip().lower()
         results = [
@@ -323,6 +324,7 @@ class MockDBLayer:  # pylint: disable=too-many-public-methods,protected-access
         job_id = f"mock-job-{len(self._jobs) + 1}"
         self._jobs[job_id] = {
             "job_id": job_id,
+            "user_email": user_email,
             "status": "pending",
             "format": data_format,
             "docket_ids": docket_ids,
@@ -362,3 +364,80 @@ class MockDBLayer:  # pylint: disable=too-many-public-methods,protected-access
     def get_download_jobs(self, user_email):  # pylint: disable=unused-argument
         """Return all download jobs for a user."""
         return list(self._jobs.values())
+
+    def delete_download_job(self, job_id: str, user_email: str) -> bool:
+        """Delete a download job if it exists and belongs to the user."""
+        job = self._jobs.get(job_id)
+        if job is None:
+            return False
+
+        if job.get("user_email") and job["user_email"] != user_email:
+            return False
+
+        del self._jobs[job_id]
+        return True
+
+    def get_dockets_by_ids_filtered(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-branches,too-many-statements,too-many-nested-blocks
+            self,
+            docket_ids: List[str],
+            docket_type_param: str = None,
+            agency: List[str] = None,
+            cfr_part_param: List[str] = None,
+            start_date: str = None,
+            end_date: str = None,
+    ) -> List[Dict[str, Any]]:
+        """Mirror DBLayer.get_dockets_by_ids_filtered: filter by the same fields
+        and shapes the real SQL applies.
+        """
+        ids = {str(d) for d in docket_ids}
+        results = [item for item in self._items() if str(item["docket_id"]) in ids]
+
+        if docket_type_param:
+            results = [r for r in results
+                       if r.get("docket_type", "").lower() == docket_type_param.lower()]
+
+        if agency:
+            results = [r for r in results
+                       if any(a.lower() in r.get("agency_id", "").lower() for a in agency)]
+
+        if cfr_part_param:
+            filtered = []
+            for r in results:
+                cfr_refs = r.get("cfr_refs") or []
+                for c in cfr_part_param:
+                    if isinstance(c, dict):
+                        title = c.get("title", "")
+                        part = c.get("part", "")
+                        match = any(
+                            str(ref.get("title", "")) == title
+                            and part in (ref.get("cfrParts") or {})
+                            for ref in cfr_refs
+                        )
+                    else:
+                        needle = str(c).lower()
+                        match = any(
+                            needle in str(pk).lower()
+                            for ref in cfr_refs
+                            for pk in (ref.get("cfrParts") or {}).keys()
+                        )
+                    if match:
+                        filtered.append(r)
+                        break
+            results = filtered
+
+        if start_date or end_date:
+            kept = []
+            for r in results:
+                md = r.get("modify_date")
+                if md is None:
+                    kept.append(r)
+                    continue
+                md_str = md if isinstance(md, str) else md.isoformat()
+                if start_date and md_str < start_date:
+                    continue
+                if end_date and md_str > end_date:
+                    continue
+                kept.append(r)
+            results = kept
+
+        return results

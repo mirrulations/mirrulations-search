@@ -408,8 +408,8 @@ def map_docket(payload: dict) -> dict[str, Any] | None:
     }
 
 
-def map_document_safe(raw: dict) -> dict[str, Any] | None:
-    doc = map_document(raw)
+def map_document_safe(raw: dict, s3_key: str = "") -> dict[str, Any] | None:
+    doc = map_document(raw, s3_key)
     if not doc:
         return None
     dt = doc.get("document_type")
@@ -638,7 +638,7 @@ def ingest_docket_and_documents(
         if raw is None:
             skipped += 1
             continue
-        doc = map_document_safe(raw)
+        doc = map_document_safe(raw, str(path))
         if not doc:
             log.warning("Skipping %s — could not map document.", path.name)
             skipped += 1

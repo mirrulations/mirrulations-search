@@ -29,7 +29,7 @@ const FORMAT_OPTIONS = [
   { id: "csv", label: "CSV" },
 ];
 
-export default function DownloadModal({ collectionName, docketIds, onClose }) {
+export default function DownloadModal({ collectionName, docketIds, onClose, onOpenDownloadStatus }) {
   const [selected, setSelected] = useState(new Set(["metadata"]));
   const [format, setFormat] = useState("raw");
   const [status, setStatus] = useState(null); // null | "pending" | "ready"
@@ -39,35 +39,6 @@ export default function DownloadModal({ collectionName, docketIds, onClose }) {
   const [message, setMessage] = useState(null);
  
   const isAll = !docketIds || docketIds.length === 0;
- 
-  useEffect(() => {
-    if (status !== "pending" || !jobId) return;
-    const pollId = setInterval(async () => {
-      try {
-        const res = await fetch(`/download/status/${jobId}`);
-        if (res.status === 401) {
-          clearInterval(pollId);
-          setError("Your session expired. Please log in again.");
-          return;
-        }
-        if (!res.ok) {
-          throw new Error(`Polling failed: ${res.status}`);
-        }
-        const data = await res.json();
-        if (data.status === "ready") {
-          setStatus("ready");
-          clearInterval(pollId);
-        } else if (data.status === "failed") {
-          setStatus(null);
-          setError("Failed to prepare download.");
-          clearInterval(pollId);
-        }
-      } catch (err) {
-        console.error("Polling error:", err);
-      }
-    }, 5000);
-    return () => clearInterval(pollId);
-  }, [status, jobId]);
 
   const toggleSelected = (id) => {
     setSelected((prev) => {
@@ -101,6 +72,8 @@ const handleDownload = async () => {
     const data = await response.json();
     setJobId(data.job_id);
     setStatus("pending");
+    onClose();
+    onOpenDownloadStatus();
   } catch (err) {
     if (err.message === "UNAUTHORIZED") {
       setError("Your session expired. Please log in again.");
@@ -118,7 +91,7 @@ const handleDownload = async () => {
  
   const Checkbox = ({ checked, onChange }) => (
     <div
-      onClick={onChange}
+      onClick={(e) => { e.stopPropagation(); onChange(); }}
       style={{
         width: 18,
         height: 18,
@@ -145,6 +118,24 @@ const handleDownload = async () => {
     return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
+
+      <div className="modal-header">
+        <button
+          onClick={onClose}
+          style={{
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+            color: "#aaa",
+            fontSize: 20,
+            lineHeight: 1,
+            padding: "2px 4px",
+          }}
+          aria-label="Close"
+        >
+          ✕
+        </button>
+      </div>
  
         <h2 className="modal-title">
           {isAll
@@ -158,7 +149,7 @@ const handleDownload = async () => {
         {/* ── Pending ───────────────────────────────── */}
         {status === "pending" && (
           <p className="modal-loading">
-            Package is being prepared — this may take a few minutes.
+            Package is being prepared — this may take a few minutes. Please click "Check Downloads" to see the status of your download!
           </p>
         )}
  

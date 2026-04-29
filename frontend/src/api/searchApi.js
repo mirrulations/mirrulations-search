@@ -50,7 +50,16 @@ export async function searchDockets(query, docket_type = '', agency = [], cfr_pa
 		throw new Error("UNAUTHORIZED")
 	}
 	if (!response.ok) {
-		throw new Error(`Search request failed: ${response.status}`)
+		let message = "Search failed";
+		try {
+			const err = await response.json();
+			if (err.error) {
+				message = err.error;
+			}
+		} catch (e) {
+			// ignore JSON parse errors
+		}
+		throw new Error(message);
 	}
 
 	const results = await response.json()
