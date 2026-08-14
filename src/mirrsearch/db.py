@@ -1149,8 +1149,10 @@ class DBLayer:  # pylint: disable=too-many-public-methods
 def _get_secrets_from_aws() -> Dict[str, str]:
     if boto3 is None:
         raise ImportError("boto3 is required to use AWS Secrets Manager.")
-    client = boto3.client("secretsmanager", region_name="YOUR_REGION")
-    response = client.get_secret_value(SecretId="YOUR_SECRET_NAME")
+    region = os.environ.get("AWS_SECRET_REGION", "us-east-1")
+    client = boto3.client("secretsmanager", region_name=region)
+    secret_name = os.environ.get("DB_SECRET_NAME", "mirrulationsdb/postgres/master")
+    response = client.get_secret_value(SecretId=secret_name)
     return json.loads(response["SecretString"])
 
 
