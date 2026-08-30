@@ -1,4 +1,5 @@
 """Internal logic module for search operations with pagination"""
+import math
 from datetime import date, datetime, timezone
 from typing import List
 
@@ -6,7 +7,7 @@ from mirrsearch.db import cfr_part_filter_patterns, _cfr_exact_title_part_pairs,
 from mirrsearch.docket_id import normalize_docket_id
 
 
-def _correlation_score(row, support_k=10):
+def _correlation_score(row, support_k=10, date_weight=0.1, reference_date=None):
     """Compute ratio score with support bias toward larger denominator."""
     match_total = int(row.get("document_match_count", 0)) + int(row.get("comment_match_count", 0))
     total = int(row.get("document_total_count", 0)) + int(row.get("comment_total_count", 0))
@@ -14,7 +15,22 @@ def _correlation_score(row, support_k=10):
         return 0.0
     ratio = match_total / total
     support = total / (total + support_k)
-    return ratio * support
+    base = ratio * support
+
+    modify_date = row.get("modify_date")
+    if modify_date is not None:
+        if reference_date is None:
+            reference_date = datetime.now(timezone.utc)
+        if isinstance(modify_date, str):
+            modify_date = datetime.fromisoformat(modify_date)
+        if modify_date.tzinfo is None:
+            modify_date = modify_date.replace(tzinfo=timezone.utc)
+        age_years = (reference_date - modify_date).days / 365.25
+        recency = -math.tanh(age_years / 5)
+        base += date_weight * recency
+
+    return max(0.0, min(1.0, base))
+
 
 
 def _row_docket_key(row):
@@ -373,12 +389,13 @@ class InternalLogic:  # pylint: disable=too-few-public-methods
         docket_ids = [_row_docket_key(r) for r in rows]
         totals_map = self.db_layer.get_docket_document_comment_totals(docket_ids)
 
+        reference_date = datetime.now(timezone.utc)
         for row in rows:
             did = _row_docket_key(row)
             totals = totals_map.get(did, {})
             row["document_total_count"] = totals.get("document_total_count", 0)
             row["comment_total_count"] = totals.get("comment_total_count", 0)
-            row["correlation_score"] = _correlation_score(row)
+            row["correlation_score"] = _correlation_score(row, reference_date=reference_date)
 
     def _sort_results(self, rows, sort_by=None):
         """Sort results by the requested field, defaulting to relevance.
