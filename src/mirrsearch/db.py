@@ -10,6 +10,7 @@ from typing import List, Dict, Any, Set, Optional
 import os
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
+from sqlalchemy.pool import NullPool
 from opensearchpy import OpenSearch
 
 log = logging.getLogger(__name__)
@@ -143,12 +144,18 @@ def _reset_aoss_breaker_for_tests() -> None:
 # ---------------------------------------------------------------------------
 # SQLAlchemy engine — created once at module level, shared across all requests.
 #
-#   pool_pre_ping=True  — before handing out a connection, SQLAlchemy runs
-#                         SELECT 1. If the connection is dead it discards it
-#                         and opens a fresh one transparently.
-#   pool_recycle=1800   — recycle connections older than 30 minutes so RDS's
-#                         idle-connection timeout never kills them silently.
-#   pool_size / max_overflow — tune to match your Gunicorn worker count.
+# NullPool: every checkout opens a connection and every return closes it, so
+# no connection is ever held idle. This is deliberate and load-bearing --
+# Aurora Serverless v2 will not scale to zero while any connection is open,
+# and a pooled engine keeps one alive 24/7. That costs ~$25/mo in ACU charges
+# for a database nobody is querying. Do not "optimise" this back to QueuePool.
+#
+# pool_pre_ping / pool_recycle went with it: both exist to detect a stale
+# pooled connection, and NullPool never has one. pool_size / max_overflow are
+# not accepted alongside NullPool.
+#
+# ponytail: NullPool has no connection ceiling. If concurrency ever outgrows
+# Aurora's max_connections, put pgbouncer in front -- don't restore the pool.
 # ---------------------------------------------------------------------------
 _ENGINE: Engine = None
 
@@ -156,10 +163,7 @@ _ENGINE: Engine = None
 def _build_engine(dsn: str) -> Engine:
     return create_engine(
         dsn,
-        pool_pre_ping=True,
-        pool_recycle=1800,
-        pool_size=10,
-        max_overflow=5,
+        poolclass=NullPool,
         connect_args={
             "connect_timeout": 5,
         },

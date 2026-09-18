@@ -9,6 +9,7 @@ from types import SimpleNamespace
 # pylint: disable=redefined-outer-name,protected-access,too-many-lines,duplicate-code
 from datetime import datetime
 import pytest
+from sqlalchemy.pool import NullPool
 import mirrsearch.db as db_module
 from mirrsearch.db import DBLayer, cfr_part_filter_patterns, get_db
 from mirrsearch.db import _AOSS_FAIL_THRESHOLD  # pylint: disable=protected-access
@@ -1424,3 +1425,26 @@ def test_get_download_jobs_orders_by_created_at_desc():
     db.get_download_jobs("user@email.com")
     sql, _ = (db.engine._executed[0][0], db.engine._executed[0][1])
     assert "ORDER BY created_at DESC" in sql
+
+
+# --- engine pool policy ---
+
+def test_build_engine_uses_nullpool(monkeypatch):
+    """NullPool is load-bearing: a pooled connection blocks Aurora scale-to-zero.
+
+    Guards against someone restoring pool_size/max_overflow, which would silently
+    hold a connection open 24/7 and stop the cluster ever pausing.
+    """
+    captured = {}
+
+    def fake_create_engine(dsn, **kwargs):
+        captured["dsn"] = dsn
+        captured.update(kwargs)
+        return SimpleNamespace()
+
+    monkeypatch.setattr(db_module, "create_engine", fake_create_engine)
+    db_module._build_engine("postgresql+psycopg2://u:p@h:5432/d")
+
+    assert captured["poolclass"] is NullPool
+    assert "pool_size" not in captured
+    assert "max_overflow" not in captured
